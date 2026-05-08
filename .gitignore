@@ -1,0 +1,131 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Python tooling caches
+.mypy_cache/
+.pyre/
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Debug / profiling
+profile_default/
+ipython_config.py
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+nosetests.xml
+*.cover
+
+# Logs
+logs/
+*.log
+
+# Deep learning artifacts
+# model checkpoints / weights
+checkpoints/
+models/
+weights/
+*.ckpt
+*.pt
+*.pth
+*.t7
+*.h5
+*.weights
+*.pb
+*.onnx
+
+# Experiment tracking
+wandb/
+mlruns/
+runs/
+tensorboard/
+tb_logs/
+
+# Data and large files
+data/
+datasets/
+*.hdf5
+*.h5
+*.npy
+*.npz
+*.lmdb
+*.db
+
+# Secrets and env
+.env
+.env.*
+secrets.json
+credentials.json
+*.pem
+*.key
+
+# LaTeX build artifacts
+*.aux
+*.lof
+*.log
+*.lot
+*.fls
+*.out
+*.toc
+*.fmt
+*.fot
+*.cb
+*.cb2
+*.bbl
+*.blg
+*.brf
+*.synctex.gz
+*.fdb_latexmk
+*.nav
+*.snm
+*.vrb
+latexmkrc
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Misc
+*.pyc
+*.pyo
+*.pyd
+*.orig
+*.rej
+
