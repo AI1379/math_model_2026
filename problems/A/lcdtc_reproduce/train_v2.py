@@ -423,7 +423,7 @@ def compute_ap(det_boxes, det_scores, gt_boxes, iou_thresh=0.5):
 def evaluate(model, val_loader, grids, num_cls=1, num_content=5, img_size=640):
     model.eval()
     device = next(model.parameters()).device
-    grids_dev = [(g[0].to(device), s, gs) for g, s, gs in grids]
+    grids_dev = [(grid_xy.to(device), stride, gs) for grid_xy, stride, gs in grids]
 
     all_dets = []
 

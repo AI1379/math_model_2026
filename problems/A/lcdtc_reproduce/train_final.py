@@ -308,7 +308,7 @@ def decode_predictions(preds_raw, grids, num_cls, num_content, img_size=640, con
                         if len(order) == 1:
                             break
                         rest = order[1:]
-                        iou = _box_iou(cboxes[i].unsqueeze(0), cboxes[rest])[0]
+                        iou = _box_iou(cboxes[i].unsqueeze(0), cboxes[rest])
                         order = rest[iou < 0.65]
                     idx_orig = cmask.nonzero(as_tuple=True)[0][torch.tensor(keep, device=device)]
                     keep_list.append(idx_orig)
@@ -371,7 +371,7 @@ def compute_ap(det_boxes, det_scores, gt_boxes, iou_thresh=0.5):
 def evaluate(model, val_loader, grids, num_cls=1, num_content=5, img_size=640):
     model.eval()
     device = next(model.parameters()).device
-    grids_dev = [(g[0].to(device), s, gs) for g, s, gs in grids]
+    grids_dev = [(grid_xy.to(device), stride, gs) for grid_xy, stride, gs in grids]
     all_dets = []
     with torch.no_grad():
         for imgs, tgts, sizes in val_loader:
