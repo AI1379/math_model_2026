@@ -129,3 +129,4 @@ desktop.ini
 *.orig
 *.rej
 
+output*
