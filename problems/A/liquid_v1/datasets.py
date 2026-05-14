@@ -68,8 +68,10 @@ def _bbox_from_mask(mask: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
 
 def _expand_box(
     box: Tuple[int, int, int, int], width: int, height: int, context: float
-) -> Tuple[int, int, int, int]:
+) -> Optional[Tuple[int, int, int, int]]:
     x1, y1, x2, y2 = box
+    if x1 >= x2 or y1 >= y2:
+        return None
     bw = max(x2 - x1, 1)
     bh = max(y2 - y1, 1)
     pad_x = int(round(bw * context))
@@ -78,6 +80,8 @@ def _expand_box(
     y1 = max(0, y1 - pad_y)
     x2 = min(width, x2 + pad_x)
     y2 = min(height, y2 + pad_y)
+    if x1 >= x2 or y1 >= y2:
+        return None
     return x1, y1, x2, y2
 
 
@@ -89,7 +93,10 @@ def _crop_image_and_mask(
 ) -> Tuple[Image.Image, Optional[Image.Image]]:
     if box is None:
         return image, mask
-    x1, y1, x2, y2 = _expand_box(box, image.width, image.height, context)
+    expanded = _expand_box(box, image.width, image.height, context)
+    if expanded is None:
+        return image, mask
+    x1, y1, x2, y2 = expanded
     image = image.crop((x1, y1, x2, y2))
     if mask is not None:
         mask = mask.crop((x1, y1, x2, y2))
