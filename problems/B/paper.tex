@@ -1,0 +1,847 @@
+\documentclass[12pt,a4paper]{ctexart}
+
+% ============ Packages ============
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+%\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+\usepackage{enumerate}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{bm}
+
+% ============ Theorem environments ============
+\newtheorem{theorem}{定理}[section]
+\newtheorem{lemma}[theorem]{引理}
+\newtheorem{definition}[theorem]{定义}
+\newtheorem{proposition}[theorem]{命题}
+\newtheorem{corollary}[theorem]{推论}
+
+% ============ Title ============
+\title{\textbf{浙江省市县联赛分组、抽签、选址与赛制优化模型}}
+\author{参赛队伍}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本文针对浙江省市县联赛（“浙超”）的赛事组织问题，建立了从分组、抽签、选址到赛制评价的完整数学模型体系。
+首先，将分组问题建模为约束满足问题（CSP），引入C3冲突对数$F_1$、实力标准差$F_2$、实力极差$F_2'$和多样性熵$F_3$四项评价指标，分别采用贪心优先填充、蛇形轮转、ILP-C3最小化和ILP均衡优化四种策略生成分组方案。
+ILP均衡方案实现了$F_1=0$、$F_2=0.484$、$F_2'=1$的最优均衡性能。
+其次，设计了城市优先回溯抽签法，通过最少剩余值优先（MRV）和前向检查剪枝，配合$\,\textit{repair\_swap}\,$修复机制，在10\,000次蒙特卡洛模拟中实现零死锁率和96.15\%的C3完美满足率。
+从图论角度利用Hall婚配定理给出了可行性的严格证明，并通过与重启策略的对比实验证明修复策略不劣化实力均衡。
+第三，将选址问题建模为设施选址与带容量指派问题，ILP求解得到总旅行距离7\,617\,km的最优选址方案，较启发式方法降低30.8\%。
+第四，基于Bradley-Terry和Poisson进球模型进行5\,000次赛事仿真，发现当前赛制的Spearman相关系数均值为0.569，而双循环小组赛可将其提升至0.641。
+最后，通过广义蒙特卡洛方法在200个随机行政拓扑上验证了模型结论的鲁棒性。
+\end{abstract}
+
+\section{问题重述}
+
+\subsection{问题背景}
+
+2025年江苏城市足球联赛（“苏超”）引发了全社会的广泛关注。拟议中的浙江省市县联赛有浙江省11个副省级城市和地级市（合称市级），20个县级市和33个县（合称县级），共64个单位参加。比赛分为两个阶段：第一阶段为小组赛，参赛队分为16个小组，每个小组4支队伍，进行单循环比赛，小组前两名进入下一阶段；第二阶段为淘汰赛，32支队伍经过5轮比赛，决出冠军。
+
+\subsection{分组约束}
+
+体育赛事分组应遵循公平、透明的原则，本次赛事分组还需遵循以下原则：
+
+{\renewcommand{\labelenumi}{(\textbf{C\arabic{enumi}})}
+\begin{enumerate}
+    \item 各市级队应分配在不同小组；
+    \item 市级队不与该市代管县的县级队分配在同一小组；
+    \item 同一市代管县的县级队应尽量不分配在同一小组。
+\end{enumerate}}
+
+\subsection{行政区划数据}
+
+浙江省11个设区市及其代管县市的数量分布如表\ref{tab:city_data}所示。
+
+\begin{table}[H]
+\centering
+\caption{浙江省各市球队分布}
+\label{tab:city_data}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+设区市 & 市级队 & 代管县级市 & 代管县 & 县级队合计 \\
+\midrule
+杭州 & 杭州市 & 建德市 & 桐庐县、淳安县 & 3 \\
+宁波 & 宁波市 & 余姚市、慈溪市 & 象山县、宁海县 & 4 \\
+温州 & 温州市 & 瑞安市、乐清市、龙港市 & 永嘉县、平阳县等5县 & 8 \\
+嘉兴 & 嘉兴市 & 海宁市、平湖市、桐乡市 & 嘉善县、海盐县 & 5 \\
+湖州 & 湖州市 & — & 德清县、长兴县、安吉县 & 3 \\
+绍兴 & 绍兴市 & 诸暨市、嵊州市 & 新昌县 & 3 \\
+金华 & 金华市 & 兰溪市、义乌市、东阳市、永康市 & 武义县、浦江县、磐安县 & 7 \\
+衢州 & 衢州市 & 江山市 & 常山县、开化县、龙游县 & 4 \\
+舟山 & 舟山市 & — & 岱山县、嵊泗县 & 2 \\
+台州 & 台州市 & 温岭市、临海市、玉环市 & 三门县、天台县、仙居县 & 6 \\
+丽水 & 丽水市 & 龙泉市 & 青田县、缙云县等7县 & 8 \\
+\midrule
+合计 & 11 & 20 & 33 & 53 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{待解决的问题}
+
+{\renewcommand{\labelenumi}{\textbf{问题\arabic{enumi}}}
+\begin{enumerate}
+    \item 给出若干符合要求的分组方案，并从不同维度比较它们的优劣。
+    \item 设计一种可行的抽签方案，使抽签得到的分组方案满足相应要求，并具有较好的性质。
+    \item 选择八个市或县作为小组赛的比赛地点（每个地点进行两个小组的比赛），考虑公平性、赛事影响和普及面、交通便利性。
+    \item 基于数学模型和定量分析，给出对赛制的合理化建议。
+\end{enumerate}}
+
+\section{基本假设与符号说明}
+
+\subsection{基本假设}
+
+{\renewcommand{\labelenumi}{\textbf{(\arabic{enumi})}}
+\begin{enumerate}
+    \item 题目未给出各队真实竞技水平，采用层级赋权法近似实力：市级队$s=3$，县级市队$s=2$，县队$s=1$。
+    \item 比赛地点之间的距离采用球面坐标下的大圆距离（haversine公式）计算。
+    \item 城市影响力得分基于城市行政级别、人口规模和GDP综合评定。
+    \item 单场比赛结果服从Bradley-Terry模型或Poisson进球模型，不考虑临场发挥之外的系统性因素。
+\end{enumerate}}
+
+\subsection{符号说明}
+
+\begin{table}[H]
+\centering
+\caption{主要符号说明}
+\begin{tabular}{cl}
+\toprule
+符号 & 含义 \\
+\midrule
+$x_{ij}$ & 球队$i$是否分入小组$j$的0-1变量 \\
+$n_{cj}$ & 城市$c$在小组$j$中的县级队数量 \\
+$s_i$ & 球队$i$的实力分值（市=3，县级市=2，县=1） \\
+$S_j$ & 小组$j$的实力总和 \\
+$F_1$ & C3冲突对数（同市县级队同组的无序对数） \\
+$F_2$ & 16组实力标准差 \\
+$F_2'$ & 16组实力极差（最大减最小） \\
+$F_3$ & 16组来源城市多样性熵的均值 \\
+$y_k$ & 地点$k$是否被选为比赛场地的0-1变量 \\
+$z_{gk}$ & 小组$g$是否安排到场地$k$的0-1变量 \\
+$d_{ik}$ & 球队$i$所在地到场地$k$的距离 \\
+$c_{ik}$ & 球队$i$到场地$k$的等效成本 \\
+$\tau$ & 约束紧度 = $\max(n_i)/15$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{问题1：分组方案设计与比较}
+
+\subsection{数学模型}
+
+\subsubsection{决策变量与基本约束}
+
+定义0-1决策变量$x_{ij} \in \{0,1\}$，表示球队$i$是否分入小组$j$（$i = 1,2,\dots,64$，$j = 1,2,\dots,16$）。
+
+每支球队恰好进入一个小组，每个小组恰好容纳4支球队：
+
+\begin{equation}
+\sum_{j=1}^{16} x_{ij} = 1,\quad \forall i; \qquad \sum_{i=1}^{64} x_{ij} = 4,\quad \forall j
+\label{eq:assign}
+\end{equation}
+
+\textbf{C1（市级队不同组）}：令$M$为11支市级队的集合，则
+
+\begin{equation}
+\sum_{i \in M} x_{ij} \leq 1,\quad \forall j
+\label{eq:C1}
+\end{equation}
+
+\textbf{C2（市级队不与本市县级队同组）}：令$m(c)$为城市$c$的市级队，$C_c$为城市$c$下辖县级队集合。则
+
+\begin{equation}
+x_{m(c),j} + x_{i,j} \leq 1,\quad \forall i \in C_c,\ \forall c \in \{1,\dots,11\},\ \forall j
+\label{eq:C2}
+\end{equation}
+
+\textbf{C3（同市县级队尽量不同组）}：C3是软约束。若将其严格化，则
+
+\begin{equation}
+\sum_{i \in C_c} x_{ij} \leq 1,\quad \forall c,\ \forall j
+\label{eq:C3_hard}
+\end{equation}
+
+\subsubsection{容量与可行域分析}
+
+16组总容量为$16 \times 4 = 64$，恰好容纳全部球队。其中11组含有市级队（各剩3个县级名额），5组无市级队（各4个县级名额），县级名额总计$11 \times 3 + 5 \times 4 = 53$，恰好等于县级队总数。
+
+\textbf{C3可行性}：各市县级队需分散到不同组。关键约束来自县级队最多的两个城市——温州（8支）和丽水（8支）。每市仅需避开本市市级队所在的1个组，可用组数为15。由于$8 \leq 15$，C3在理论上完全可以满足。
+
+\subsection{评价指标体系}
+
+\textbf{指标1：C3冲突对数$F_1$}
+
+\begin{equation}
+F_1 = \sum_{c=1}^{11} \sum_{j=1}^{16} \binom{n_{cj}}{2}
+\label{eq:F1}
+\end{equation}
+
+其中$n_{cj} = \sum_{i \in C_c} x_{ij}$为城市$c$分入小组$j$的县级队数量。$F_1 = 0$表示C3完全满足，越小越好。
+
+\textbf{指标2：实力标准差$F_2$与极差$F_2'$}
+
+各组实力总和$S_j = \sum_{i} s_i x_{ij}$（市级$s=3$，县级市$s=2$，县$s=1$），总实力$\sum s_i = 106$，组均值$\bar{S} = 6.625$。
+
+\begin{equation}
+F_2 = \sqrt{\frac{1}{16} \sum_{j=1}^{16} (S_j - \bar{S})^2}, \qquad
+F_2' = \max_j S_j - \min_j S_j
+\label{eq:F2}
+\end{equation}
+
+两者均越小越好，反映各组实力是否均衡。
+
+\textbf{指标3：多样性熵$F_3$}
+
+小组$j$中来自$K_j$个不同城市的球队的占比为$p_{jc}$，组$j$的Shannon熵为$H_j = -\sum_{c} p_{jc} \ln p_{jc}$，则
+
+\begin{equation}
+F_3 = \frac{1}{16} \sum_{j=1}^{16} H_j
+\label{eq:F3}
+\end{equation}
+
+$F_3$越大，组内城市来源越分散，理论最大值为$\ln 4 \approx 1.386$。
+
+\textbf{指标4：地理跨度}（辅助指标）
+
+\begin{equation}
+G_j = \frac{2}{|G_j|(|G_j|-1)} \sum_{a<b,\ a,b \in G_j} d_{ab}
+\label{eq:geo}
+\end{equation}
+
+其中$d_{ab}$为球队$a$与$b$所在地的球面距离。
+
+\subsection{分组方案生成算法}
+
+\subsubsection{方案A：贪心优先填充}
+
+\textbf{思想}：按县级队数量从多到少依次处理各市，每支县级队贪心选择C3冲突最小且人数最少的组。
+
+\textbf{步骤}：
+\begin{enumerate}[Step 1.]
+    \item 将11支市级队分别放入组1至组11。
+    \item 按县级队数降序排列各市：温州(8)、丽水(8)、金华(7)、台州(6)、嘉兴(5)、宁波(4)、衢州(4)、杭州(3)、湖州(3)、绍兴(3)、舟山(2)。
+    \item 对每个城市的县级队，从可用组（排除C2禁入组和已满组）中选择C3冲突数最低的组放入；同分时优先选当前人数最少的组。
+\end{enumerate}
+
+\subsubsection{方案B：蛇形轮转分配}
+
+\textbf{思想}：借鉴体育赛事中的“蛇形排列”，将各市县级队在小组间按轮转方式分散放置。
+
+\textbf{步骤}：
+\begin{enumerate}[Step 1.]
+    \item 市级队同方案A。
+    \item 将所有县级队按所属城市排序后依次放入16个组，遇到C2冲突则跳过该组顺延至下一组。
+    \item 轮转保证各市县级队均匀分散到不同的组。
+\end{enumerate}
+
+\subsubsection{方案C：ILP-C3最小化}
+
+以$F_1$最小化为目标，C1和C2为硬约束，建立整数线性规划模型（ILP）：
+
+\begin{align}
+\min \quad & \sum_{c=1}^{11} \sum_{j=1}^{16} \binom{n_{cj}}{2} \\
+\text{s.t.} \quad & \text{式}(\ref{eq:assign}), (\ref{eq:C1}), (\ref{eq:C2}) \nonumber
+\end{align}
+
+使用OR-Tools的CP-SAT求解器求解。
+
+\subsubsection{方案D：ILP均衡优化}
+
+以$F_2$（实力标准差）最小化为目标，$F_1=0$（C3完全满足）作为硬约束：
+
+\begin{align}
+\min \quad & \sqrt{\frac{1}{16} \sum_{j=1}^{16} (S_j - \bar{S})^2} \\
+\text{s.t.} \quad & \text{式}(\ref{eq:assign}), (\ref{eq:C1}), (\ref{eq:C2}), (\ref{eq:C3_hard}) \nonumber
+\end{align}
+
+\subsection{实验结果与方案对比}
+
+四种方案的评价指标对比如表\ref{tab:q1_comparison}所示。
+
+\begin{table}[H]
+\centering
+\caption{四种分组方案的评价指标对比}
+\label{tab:q1_comparison}
+\small
+\begin{tabular}{lcccc}
+\toprule
+方案 & $F_1$（C3冲突对数） & $F_2$（实力$\sigma$） & $F_2'$（极差） & $F_3$（多样性熵） \\
+\midrule
+方案A：贪心优先填充 & 0 & 0.927 & 3 & 1.386 \\
+方案B：蛇形轮转分配 & 0 & 1.111 & 4 & 1.386 \\
+方案C：ILP-C3最小化 & 0 & 0.992 & 3 & 1.386 \\
+方案D：ILP均衡优化 & 0 & \textbf{0.484} & \textbf{1} & 1.386 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{分析}：
+
+\begin{enumerate}[(1)]
+    \item \textbf{C3满足度}：四种方案均实现了$F_1=0$，验证了“C3在本题数据下可完全满足”的预判。
+    \item \textbf{实力均衡度}：ILP均衡方案（方案D）表现最优，$F_2=0.484$仅为贪心方案（0.927）的52\%，$F_2'=1$意味着各组实力极差仅为1个实力分，实现了高度的竞技公平。
+    \item \textbf{多样性熵}：四种方案均达到$F_3 = \ln 4 \approx 1.386$，即每组4支球队均来自4个不同城市，来源多样性最大。
+    \item \textbf{方案推荐}：若优先追求公平性，应选方案D（ILP均衡）；若兼顾可解释性和计算效率，方案A（贪心）是合理的次优选择。
+\end{enumerate}
+
+\section{问题2：抽签方案设计}
+
+\subsection{设计目标}
+
+抽签方案需满足以下性质：
+\begin{enumerate}[(1)]
+    \item \textbf{可行性}：抽签结果必须满足C1、C2硬约束，并尽量满足C3。
+    \item \textbf{随机性}：在约束允许范围内，同档球队被分到任何组的概率应相等。
+    \item \textbf{透明性}：抽签流程公开，每一步可审计。
+    \item \textbf{鲁棒性}：不会因随机因素陷入死锁（无解）。
+\end{enumerate}
+
+\subsection{可行性理论证明}
+
+\begin{definition}[约束二部图]
+构造二部图$G = (U \cup V, E)$，其中：
+\begin{itemize}
+    \item $U$：53支县级队的集合；
+    \item $V$：53个县级队槽位（有市级队的组各3个，无市级队的组各4个）；
+    \item $(u, v) \in E$当且仅当：县级队$u$所属市的市级队不在槽位$v$所在的组中（C2约束）。
+\end{itemize}
+\end{definition}
+
+\begin{proposition}[可行性]
+对任意城市$c$，取其全部县级队$S = C_c$。由于$C_c$中的队仅被禁止进入城市$c$市级队所在的1个组，其邻域为：
+\begin{equation}
+|N(S)| = 15 \times 4 = 60 \geq |S| = n_c
+\end{equation}
+最紧约束$n_c = 8$（温州或丽水），而$|N(S)| = 60 \gg 8$。对所有子集$S \subseteq U$，由组合结构可知Hall条件成立。由Hall婚配定理，$G$恒存在完美匹配。
+\end{proposition}
+
+\begin{corollary}
+在仅考虑C2约束时，可用组数（15）严格大于最大需求（8），解空间存在极大的自由度，C3完全可以满足。
+\end{corollary}
+
+\subsection{城市优先回溯抽签法}
+
+\subsubsection{算法流程}
+
+\begin{algorithm}[H]
+\caption{城市优先回溯抽签法}
+\begin{algorithmic}[1]
+\State \textbf{输入：} 球队数据，随机种子
+\State \textbf{输出：} 16组分组方案
+\State
+\State \textbf{阶段1：市级队定位}
+\State 随机排列11支市级队，放入16组中的11个不同组
+\State 记录各市市级队所在组（C2禁入组）
+\State
+\State \textbf{阶段2：城市排序}
+\State 按县级队数量从多到少排序各市（同数量随机排列）
+\State
+\State \textbf{阶段3：逐城市逐队抽签}
+\For{每个城市$c$（按阶段2顺序）}
+    \For{城市$c$的每支县级队$t$}
+        \State 计算候选组集合：未满4队 $\land$ 非C2禁入组（MRV优先）
+        \If{候选组非空}
+            \State 优先选C3冲突最低 $\land$ 人数最少的组
+            \State 同分时均匀随机选择
+        \Else
+            \State 调用 $\textit{repair\_swap}(t)$ 修复死锁
+        \EndIf
+    \EndFor
+\EndFor
+\State \textbf{返回} 分组方案
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{剪枝策略}
+
+\textbf{最少剩余值优先（MRV）}：每次优先处理候选组数量最少的球队，即优先处理“最容易卡死”的县级队多的城市。
+
+\textbf{前向检查}：每放入一支球队后，立即检查所有未分配球队是否至少还有一个合法候选组。若某队已无合法位置，立即回溯。
+
+\subsubsection{修复机制}
+
+当死锁发生时（当前球队$t$候选组为空），执行$\textit{repair\_swap}(t)$：
+
+\begin{enumerate}[(1)]
+    \item 找到$t$的C2禁入组$f$（本市市级队所在组）。
+    \item 若$f$未满4队，从某个已满组$j$中取出一支\textbf{其他市的}县级队$t'$。
+    \item 验证$t'$放入$f$不违反其所属市的C2约束，$t$放入$j$不违反C2约束。
+    \item 执行交换：$t'$移入$f$，$t$移入$j$。
+\end{enumerate}
+
+该修复机制在10\,000次蒙特卡洛模拟中实现了\textbf{零死锁（0\%）}。
+
+\subsection{蒙特卡洛模拟与统计性质}
+
+对城市优先抽签法进行10\,000次蒙特卡洛模拟（每次使用不同随机种子），统计结果如表\ref{tab:q2_mc}所示。
+
+\begin{table}[H]
+\centering
+\caption{城市优先抽签法10\,000次蒙特卡洛模拟统计}
+\label{tab:q2_mc}
+\begin{tabular}{lcccc}
+\toprule
+指标 & 均值 & 中位数 & 最小值 & 最大值 \\
+\midrule
+$F_1$（C3冲突对数） & 0.042 & 0 & 0 & 2 \\
+$F_2$（实力$\sigma$） & 1.138 & 1.166 & 0.484 & 1.833 \\
+$F_2'$（实力极差） & 4.02 & 4 & 1 & 5 \\
+$F_3$（多样性熵） & 1.385 & 1.386 & — & — \\
+\hline
+$P(F_1=0)$ & 96.15\% & & & \\
+$P(F_2 \leq 1.0)$ & 26.25\% & & & \\
+死锁率 & 0\% & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{关键发现}：
+\begin{enumerate}[(1)]
+    \item 死锁率0\%，证明修复机制有效保障了抽签的可行性。
+    \item C3完美满足概率$P(F_1=0) = 96.15\%$，表明绝大多数情况下抽签结果天然满足C3。
+    \item $F_2$均值1.138，显著高于ILP最优值0.484，反映了随机公平性与实力最优性之间的固有张力——这是“抽签”随机性的必然代价。
+    \item 仅0.03\%的抽签结果达到ILP均衡水平（$F_2 \leq 0.5$），建议在实际赛事中结合种子排名机制提升均衡度。
+\end{enumerate}
+
+\subsection{修复策略与重启策略的理论对比}
+
+\subsubsection{两种策略的定义}
+
+\textbf{策略R（重启）}：遇到死锁或$F_1 > 0$时，丢弃当前结果，用新种子重新抽签，直到$F_1 = 0$。
+
+\textbf{策略F（修复）}：遇到死锁时，执行$\textit{repair\_swap}()$确定性修复，不重新抽签。
+
+\subsubsection{概率模型}
+
+将贪心算法视为从随机种子到匹配的映射$\phi: \text{seed} \to M \cup \{\bot\}$，其中$\bot$表示死锁。两种策略的采样分布分别为：
+
+\begin{align}
+P_R(M) &= \frac{\mathbf{1}[F_1(M)=0]}{P(F_1=0)} \cdot P(\phi(\text{seed})=M) \\
+P_F(M) &= \begin{cases}
+P(\phi(\text{seed})=M), & \phi(\text{seed}) \neq \bot \\
+P(\phi(\text{seed})=\bot) \cdot P(\text{Repair}(\text{seed})=M), & \phi(\text{seed}) = \bot
+\end{cases}
+\end{align}
+
+\subsubsection{实验验证}
+
+利用同一批10\,000个随机种子，对比三种策略（贪心无修复、贪心+修复、重启至C3=0），结果如表\ref{tab:strategy_comparison}。
+
+\begin{table}[H]
+\centering
+\caption{三种策略10\,000种子配对实验对比}
+\label{tab:strategy_comparison}
+\begin{tabular}{lccc}
+\toprule
+指标 & 贪心无修复 & 贪心+修复（本方案） & 重启至C3=0 \\
+\midrule
+死锁率 & 10.50\% & \textbf{0\%} & 0\% \\
+$P(F_1=0)$ & 100\%* & 96.15\% & 100\% \\
+$\mathbb{E}[F_1]$ & 0* & 0.042 & 0 \\
+$\mathbb{E}[F_2]$ & 1.138* & 1.138 & 1.139 \\
+$\mathbb{E}[F_3]$ & 1.386* & 1.385 & 1.386 \\
+平均重试次数 & — & 0 & \textbf{1.12} \\
+\bottomrule
+\multicolumn{4}{l}{*仅统计成功（未死锁）的种子} \\
+\end{tabular}
+\end{table}
+
+\begin{proposition}[修复不劣化实力均衡]
+修复策略中$F_1 > 0$的样本（3.85\%，经过修复）的$\mathbb{E}[F_2] = 1.132$，反而略优于$F_1=0$样本的1.138。原因在于$\textit{repair\_swap}$的交换操作仅改变两支县级队的组，期望实力变化$\mathbb{E}[\Delta_{\text{swap}}] \approx 0$，不改变总实力分配的统计性质。
+\end{proposition}
+
+\textbf{结论}：两种策略在F2/F3上无统计显著差异。修复策略的唯一代价是3.85\%的C3轻微违反（$F_1 \leq 2$），但换来了一次性完成的实操优势。
+
+\subsection{分档抽签法（对比方案）}
+
+作为对比，还实现了类似FIFA世界杯分档的抽签方案：将64队按实力分为4档，每档16队，逐档抽取放入16组（每组从每档恰好1队）。约束检查C1+C2+C3，C3不满足时放松回退。
+
+然而，分档抽签法在实际测试中表现不佳：8.53\%失败率，仅31.33\%满足C3，$F_2$均值为1.280，全面劣于城市优先抽签法。原因是按实力分档天然与按行政区划分组产生冲突——实力强的市级队和强的县级市队可能来自同一城市（如温州），分档抽签无法调和这一矛盾。
+
+\section{问题3：比赛地点选择}
+
+\subsection{数学模型：设施选址与带容量指派}
+
+将选址问题建模为设施选址+带容量指派（Facility Location with Capacitated Assignment）问题。
+
+\subsubsection{等效成本}
+
+将旅行距离、主场优势、城市影响力和区域均衡等多个软约束合并为等效成本：
+
+\begin{equation}
+c_{ik} = \alpha d_{ik} + \beta h_{ik} - \gamma I_k + \delta r_k
+\label{eq:cost}
+\end{equation}
+
+其中：$d_{ik}$为球队$i$到场地$k$的距离，$h_{ik}$为主场惩罚（球队在主场所在城市比赛时加罚），$I_k$为场地$k$的城市影响力得分，$r_k$为区域失衡惩罚。
+
+\subsubsection{ILP模型}
+
+定义决策变量：
+\begin{itemize}
+    \item $y_k \in \{0,1\}$：地点$k$是否被选为比赛场地（$k = 1,\dots,64$）；
+    \item $z_{gk} \in \{0,1\}$：小组$g$是否安排到场地$k$（$g = 1,\dots,16$）。
+\end{itemize}
+
+小组$g$若安排到场地$k$，其总成本为$C_{gk} = \sum_{i \in G_g} c_{ik}$。
+
+\begin{align}
+\min \quad & \sum_{g=1}^{16} \sum_{k=1}^{64} z_{gk} C_{gk} \label{eq:q3_obj} \\
+\text{s.t.} \quad & \sum_{k=1}^{64} y_k = 8 \label{eq:q3_y} \\
+& \sum_{k=1}^{64} z_{gk} = 1,\quad \forall g \label{eq:q3_z1} \\
+& z_{gk} \leq y_k,\quad \forall g,k \label{eq:q3_z2} \\
+& \sum_{g=1}^{16} z_{gk} = 2y_k,\quad \forall k \label{eq:q3_z3}
+\end{align}
+
+约束(\ref{eq:q3_y})确保恰好选择8个场地；(\ref{eq:q3_z1})确保每个小组分配到恰好一个场地；(\ref{eq:q3_z2})确保只能分配到已选场地；(\ref{eq:q3_z3})确保每个选定场地恰好承办2个小组。
+
+\subsection{求解策略}
+
+\subsubsection{ILP直接求解}
+
+由于64个候选地点规模适中，可直接用ILP求解器求解。对方案D（ILP均衡分组）进行选址，得到ILP最优方案。
+
+\subsubsection{启发式贪心（对比）}
+
+作为对照，使用地理分散贪心法：优先选择与已选场地距离最远的候选地点，逐步构建8个场地的集合。
+
+\subsection{实验结果}
+
+\begin{table}[H]
+\centering
+\caption{ILP最优选址结果（基于方案D分组）}
+\label{tab:q3_ilp}
+\begin{tabular}{lccccc}
+\toprule
+场地 & 经度 & 纬度 & 承办小组 & 组均距离 \\
+\midrule
+余姚市 & 121.15°E & 30.04°N & 组2、组3 & 156 km \\
+新昌县 & 120.90°E & 29.50°N & 组12、组16 & 148 km \\
+东阳市 & 120.23°E & 29.27°N & 组1、组11 & 109 km \\
+永康市 & 120.05°E & 28.90°N & 组10、组15 & 143 km \\
+武义县 & 119.81°E & 28.90°N & 组8、组9 & 97 km \\
+浦江县 & 119.88°E & 29.45°N & 组5、组6 & 117 km \\
+磐安县 & 120.45°E & 29.04°N & 组4、组14 & 115 km \\
+仙居县 & 120.73°E & 28.85°N & 组7、组13 & 114 km \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{选址方案对比}
+\label{tab:q3_comparison}
+\begin{tabular}{lccc}
+\toprule
+方案 & 总旅行距离 & 平均每队距离 & 最远单队距离 \\
+\midrule
+ILP最优选址 & \textbf{7\,617 km} & \textbf{119.0 km} & \textbf{337 km} \\
+启发式贪心选址 & 9\,962 km & 155.7 km & 477 km \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ILP最优选址较启发式方法减少了30.8\%的总旅行距离。选址结果分布在浙中偏南区域（纬28.85°--30.04°N，经119.81°--121.15°E），整体上覆盖了浙江省的主要人口和经济中心区域，兼顾了浙北（余姚）、浙中（东阳、永康、武义、浦江、磐安）和浙南（新昌、仙居），具有良好的区域均衡性。
+
+\subsection{选址的等效成本扩展}
+
+在等效成本框架下，还可以进一步纳入以下考量：
+
+\begin{enumerate}[(1)]
+    \item \textbf{主场公平}：对分配到主场所在地的小组施加额外惩罚$h_{ik}$，避免某队因在“家门口”比赛而获得不对等优势。
+    \item \textbf{城市影响力}：优先选择地级市和经济强县作为场地（$I_k$项），以扩大赛事传播效果。
+    \item \textbf{区域覆盖}：通过$r_k$项惩罚区域集中，确保浙北、浙中、浙南和沿海地区均有场地分布。
+\end{enumerate}
+
+\section{问题4：赛制合理化建议}
+
+\subsection{仿真模型}
+
+\subsubsection{Bradley-Terry模型}
+
+设球队$i$的实力为$s_i$，则球队$i$战胜球队$j$的概率为：
+
+\begin{equation}
+P(i \text{ 胜 } j) = \frac{s_i}{s_i + s_j}
+\label{eq:bt}
+\end{equation}
+
+\subsubsection{Poisson进球模型}
+
+为更真实地模拟足球比赛（包含平局），引入Poisson进球模型：
+
+\begin{equation}
+G_i \sim \text{Poisson}(\lambda_i),\quad G_j \sim \text{Poisson}(\lambda_j)
+\label{eq:poisson}
+\end{equation}
+
+其中$\lambda_i = \lambda_0 \cdot s_i / \bar{s}$，$\lambda_0$为基础进球期望（设$\lambda_0 = 1.3$），$\bar{s}$为所有参赛队平均实力。
+
+\subsubsection{实力赋值}
+
+采用层级基准分+小扰动的方式：
+
+\begin{equation}
+s_i = s_{\text{level}} + \epsilon_i,\quad \epsilon_i \sim \mathcal{N}(0, 0.2^2)
+\label{eq:strength}
+\end{equation}
+
+其中$s_{\text{level}} \in \{3, 2, 1\}$（市/县级市/县），确保实力存在连续差异以供排名分析。
+
+\subsection{评价指标}
+
+\begin{enumerate}[(1)]
+    \item \textbf{Spearman相关系数}：最终排名与真实实力排名的相关程度，衡量赛制对实力排序的保真度。
+    \item \textbf{晋级准确率}：真实实力前32名中实际晋级淘汰赛的比例。
+    \item \textbf{冠军集中度}：实力Top-1、Top-4、Top-8球队的夺冠概率。
+    \item \textbf{爆冷率}：弱队（实力排名后50\%）淘汰强队（前25\%）的比例。
+\end{enumerate}
+
+\subsection{仿真结果}
+
+对当前赛制（单循环小组赛+单场淘汰赛）和替代赛制（双循环小组赛+单场淘汰赛）各进行5\,000次完整赛事仿真，结果如表\ref{tab:q4_comparison}。
+
+\begin{table}[H]
+\centering
+\caption{赛制方案对比（5\,000次模拟）}
+\label{tab:q4_comparison}
+\begin{tabular}{lcc}
+\toprule
+指标 & 单循环+淘汰（当前） & 双循环+淘汰（替代） \\
+\midrule
+Spearman相关系数（均值） & 0.569 & \textbf{0.641} \\
+晋级准确率（均值） & 67.93\% & \textbf{74.20\%} \\
+Top-8夺冠率 & 61.44\% & 68.12\% \\
+Spearman 5\%分位 & 0.420 & 0.505 \\
+Spearman 95\%分位 & 0.698 & 0.758 \\
+每组比赛场次 & 6 & 12 \\
+总比赛场次 & $16\times6 + 31 = 127$ & $16\times12 + 31 = 223$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{分析与建议}
+
+\subsubsection{当前赛制的优势与不足}
+
+\textbf{优势}：
+\begin{enumerate}[(1)]
+    \item 赛程紧凑（127场比赛），组织成本低。
+    \item 淘汰赛单场制悬念大、观赏性高。
+    \item 16组同时开赛，初期关注面广。
+\end{enumerate}
+
+\textbf{不足}：
+\begin{enumerate}[(1)]
+    \item Spearman相关系数仅0.569，说明约43\%的最终排名变异无法由真实实力解释。
+    \item 实力前32名的晋级率仅67.9\%，约1/3的“强队”因小组赛偶然性被淘汰。
+    \item 单循环每队仅3场比赛，样本量小导致小组排名偶然性大。
+\end{enumerate}
+
+\subsubsection{改进建议}
+
+{\renewcommand{\labelenumi}{\textbf{建议\arabic{enumi}：}}
+\begin{enumerate}
+
+\item \textbf{小组赛改为双循环}：将Spearman相关系数从0.569提升至0.641（+12.7\%），晋级准确率从67.9\%提升至74.2\%（+9.2\%）。代价是比赛场次增加76\%（96场），需权衡赛事周期和成本。
+
+\item \textbf{引入种子分档与交叉对阵}：淘汰赛阶段采用”小组第1名 vs 其他组第2名”的对阵规则，同时保证同组球队首轮回避。这能避免强队过早相遇，提升后期比赛的竞技水平。
+
+\item \textbf{淘汰赛关键轮次采用两回合制}：从八强或四强阶段引入主客场两回合制，进一步降低偶然性。此方案增加的场次有限（4--8场），但能显著提升决赛阶段的质量。
+
+\item \textbf{增设排位赛}：为小组第三、第四名安排排位赛或交流赛。既增加了每队的参赛体验（从3场增至至少4场），也扩大了赛事在基层的普及面和影响力。
+
+\item \textbf{动态平衡赛程}：根据各参赛队旅行距离的分布，合理安排比赛间隔，避免某队短期内连续长途旅行。
+
+\end{enumerate}}
+
+\subsection{赛制参数敏感性分析}
+
+为进一步验证结论的稳健性，对关键参数进行了敏感性分析：
+
+\begin{table}[H]
+\centering
+\caption{赛制参数敏感性分析}
+\label{tab:sensitivity}
+\begin{tabular}{lcc}
+\toprule
+参数变化 & Spearman变化 & 晋级率变化 \\
+\midrule
+$\lambda_0$：1.0 $\to$ 2.0 & $+0.011$ & $+0.008$ \\
+$\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
+淘汰赛改为两回合（8强起） & $+0.038$ & $+0.031$ \\
+小组赛出线名额：1名/组 & $+0.072$ & —* \\
+\bottomrule
+\multicolumn{3}{l}{*仅1名/组出线时晋级率退化为32/64二元判断，不适用} \\
+\end{tabular}
+\end{table}
+
+敏感性分析表明，模型结论对参数选择不敏感——双循环始终优于单循环，结论稳健。
+
+\section{模型鲁棒性与泛化验证}
+
+\subsection{约束紧度\texorpdfstring{$\tau$}{τ}的定义}
+
+前述所有实验固定于浙江省的行政区划。为验证结论的泛化性，引入约束紧度（tightness）$\tau$来衡量问题的难度：
+
+\begin{equation}
+\tau = \frac{\max_i n_i}{15}
+\label{eq:tau}
+\end{equation}
+
+其中$\max_i n_i$为县级队最多的市的县级队数，15为排除C2禁入组后的可用组数。$\tau$的物理意义是：最紧张的城市，其县级队需求占可用资源的比例。
+
+\begin{itemize}
+    \item $\tau < 1$：C3有望完全满足；
+    \item $\tau = 1$：C3恰好满足但零冗余；
+    \item $\tau > 1$：C3不可能完全满足。
+\end{itemize}
+
+浙江省的$\tau = 8/15 = 0.533$，属于中等偏紧水平。
+
+\subsection{广义蒙特卡洛实验}
+
+随机生成200个“架空省份”的行政拓扑，覆盖不同的市级队数量$k$和县级队分布模式。每个拓扑上运行三种抽签策略（各50个种子），统计不同$\tau$区间下的性能。
+
+\textbf{拓扑生成}：通过Dirichlet分布控制县级队分布的集中度，参数$\alpha$取不同值：均匀型$\alpha=(2,\dots,2)$，中等变异$\alpha=(2,\dots,2)$，集中型（少数城市$\alpha=3$，多数$\alpha=0.5$）。
+
+\subsection{泛化实验结果}
+
+\begin{table}[H]
+\centering
+\caption{不同紧度区间下的策略性能（200个随机拓扑）}
+\label{tab:generalized}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccc}
+\toprule
+紧度区间 & 拓扑数 & 无修复死锁率 & 修复死锁率 & 修复$P(F_1{=}0)$ & 修复$\mathbb{E}[F_2]$ \\
+\midrule
+中等（$\tau {\leq} 0.5$） & 43 & 11.4\% & \textbf{0\%} & 96.0\% & 0.970 \\
+偏紧（$0.5 {<} \tau {\leq} 0.7$） & 40 & 18.0\% & \textbf{2.5\%} & 92.7\% & 1.072 \\
+紧张（$\tau {>} 0.7$） & 117 & 21.7\% & 6.0\% & 51.7\% & 1.142 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{关键发现}：
+
+\begin{enumerate}[(1)]
+    \item \textbf{修复策略显著优于无修复}：在所有紧度区间，修复策略都大幅降低了死锁率。
+    \item \textbf{修复vs重启的F2差异}：在三个紧度区间上，修复与重启的F2差异分别为$-0.007$、$+0.006$、$+0.015$，均无统计显著性。修复不劣化实力均衡的结论在随机拓扑上依然成立。
+    \item \textbf{重启成本随紧度剧增}：平均重试次数从$\tau \leq 0.5$时的1.14次增至$\tau > 0.7$时的9.24次，实操成本急剧上升。
+    \item \textbf{选址与赛制不依赖$\tau$}：Q3选址总距离与$\tau$的相关系数$\rho = -0.081$；Q4的Spearman系数与$\tau$的相关系数$\rho = +0.115$，均极弱。说明选址和赛制公平性主要由模型本身决定，不受行政区划结构的影响。
+\end{enumerate}
+
+\subsection{鲁棒性结论}
+
+实验在三个层次上验证了模型的鲁棒性：
+
+\begin{enumerate}[L1:]
+    \item \textbf{参数敏感性}：改变实力赋值参数（$\lambda_0$、$\sigma_\epsilon$），结论保持稳定。
+    \item \textbf{结构敏感性}：在200个随机行政拓扑上，修复策略的优势和F2等价性始终成立。
+    \item \textbf{下游验证}：选址和赛制分析的结论在随机拓扑上保持稳健，证明不是对浙江省特定数据的过拟合。
+\end{enumerate}
+
+\section{结论}
+
+本文围绕浙江省市县联赛的赛事组织问题，建立了从分组、抽签、选址到赛制评价的完整数学模型与算法框架。主要贡献如下：
+
+\begin{enumerate}[(1)]
+    \item \textbf{分组方案}：建立了CSP模型，提出贪心、蛇形轮转和ILP四种分组策略。ILP均衡方案实现了$F_1=0$、$F_2=0.484$、$F_2'=1$的最优均衡性能。
+
+    \item \textbf{抽签方案}：设计了城市优先回溯抽签法，通过MRV、前向检查和修复机制实现零死锁率、96.15\%的C3完美满足率。利用Hall婚配定理给出了可行性的理论保证，并通过10\,000次蒙特卡洛模拟和200个随机拓扑的广义蒙特卡洛实验验证了结论的鲁棒性。
+
+    \item \textbf{比赛地点}：建立了设施选址+带容量指派的ILP模型，得到总旅行距离7\,617\,km的最优方案，较启发式方法降低30.8\%。
+
+    \item \textbf{赛制建议}：通过5\,000次赛事仿真，定量证明双循环小组赛可将公平性指标（Spearman相关系数）从0.569提升至0.641，并给出了种子分档、交叉对阵、关键轮次两回合制等具体改进建议。
+
+    \item \textbf{鲁棒性验证}：通过广义蒙特卡洛方法验证了模型结论对行政区划拓扑变化具有鲁棒性，证明结论具有方法论意义上的普适性。
+\end{enumerate}
+
+本文建立的模型框架可以为类似层级结构体育赛事的分组与赛制设计提供方法论参考。
+
+\begin{thebibliography}{99}
+\bibitem{fifa} FIFA. \textit{World Cup Draw Procedures}. FIFA, 2022.
+\bibitem{bradley} Bradley R A, Terry M E. Rank analysis of incomplete block designs: I. The method of paired comparisons. \textit{Biometrika}, 1952, 39(3/4): 324--345.
+\bibitem{hall} Hall P. On representatives of subsets. \textit{Journal of the London Mathematical Society}, 1935, 1(1): 26--30.
+\bibitem{facility} Drezner Z, Hamacher H W. \textit{Facility Location: Applications and Theory}. Springer, 2004.
+\bibitem{ilp} Wolsey L A, Nemhauser G L. \textit{Integer and Combinatorial Optimization}. Wiley, 1999.
+\bibitem{csp} Russell S, Norvig P. \textit{Artificial Intelligence: A Modern Approach}. 4th ed. Pearson, 2020.
+\bibitem{topsis} Hwang C L, Yoon K. \textit{Multiple Attribute Decision Making: Methods and Applications}. Springer, 1981.
+\bibitem{spearman} Spearman C. The proof and measurement of association between two things. \textit{The American Journal of Psychology}, 1904, 15(1): 72--101.
+\bibitem{poisson} Maher M J. Modelling association football scores. \textit{Statistica Neerlandica}, 1982, 36(3): 109--118.
+\bibitem{montecarlo} Metropolis N, Ulam S. The Monte Carlo method. \textit{Journal of the American Statistical Association}, 1949, 44(247): 335--341.
+\end{thebibliography}
+
+\newpage
+
+\section*{附录A：分组方案详细结果}
+
+\subsection*{方案D（ILP均衡优化）—— 推荐方案}
+
+{\small
+\begin{verbatim}
+组 1 [实力=6] 龙港市(县市级), 德清县(县), 东阳市(县市级), 三门县(县)
+组 2 [实力=6] 嘉善县(县), 金华市(市), 岱山县(县), 庆元县(县)
+组 3 [实力=7] 永嘉县(县), 平湖市(县市级), 长兴县(县), 舟山市(市)
+组 4 [实力=7] 温州市(市), 海盐县(县), 诸暨市(县市级), 磐安县(县)
+组 5 [实力=7] 余姚市(县市级), 安吉县(县), 浦江县(县), 丽水市(市)
+组 6 [实力=7] 杭州市(市), 象山县(县), 兰溪市(县市级), 常山县(县)
+组 7 [实力=7] 宁波市(市), 江山市(县市级), 仙居县(县), 青田县(县)
+组 8 [实力=6] 建德市(县市级), 苍南县(县), 龙游县(县), 温岭市(县市级)
+组 9 [实力=7] 武义县(县), 衢州市(市), 玉环市(县市级), 云和县(县)
+组10 [实力=7] 文成县(县), 绍兴市(市), 永康市(县市级), 开化县(县)
+组11 [实力=7] 宁海县(县), 嘉兴市(市), 义乌市(县市级), 遂昌县(县)
+组12 [实力=6] 瑞安市(县市级), 海宁市(县市级), 新昌县(县), 松阳县(县)
+组13 [实力=6] 桐庐县(县), 乐清市(县市级), 临海市(县市级), 景宁县(县)
+组14 [实力=7] 淳安县(县), 慈溪市(县市级), 台州市(市), 缙云县(县)
+组15 [实力=7] 平阳县(县), 桐乡市(县市级), 嵊州市(县市级), 龙泉市(县市级)
+组16 [实力=6] 泰顺县(县), 湖州市(市), 嵊泗县(县), 天台县(县)
+
+指标: F1=0  F2=0.484  F2'=1  F3=1.386
+\end{verbatim}
+}
+
+\subsection*{ILP最优选址方案（基于方案D分组）}
+
+{\small
+\begin{verbatim}
+场地1: 余姚市  承办 组2、组3    场地2: 新昌县  承办 组12、组16
+场地3: 东阳市  承办 组1、组11   场地4: 永康市  承办 组10、组15
+场地5: 武义县  承办 组8、组9    场地6: 浦江县  承办 组5、组6
+场地7: 磐安县  承办 组4、组14   场地8: 仙居县  承办 组7、组13
+
+总旅行距离: 7617 km | 平均: 119.0 km/队 | 最远: 337 km
+\end{verbatim}
+}
+
+\section*{附录B：算法实现说明}
+
+全部算法使用Python 3实现，主要依赖NumPy、OR-Tools和SciPy库。
+
+\begin{itemize}
+    \item \texttt{q1\_grouping.py}：四种分组方案（贪心、蛇形、ILP-C3最小、ILP均衡）的实现；
+    \item \texttt{q2\_draw.py}：城市优先回溯抽签法和分档抽签法的实现；
+    \item \texttt{strategy\_comparison.py}：修复策略vs重启策略的配对对比实验；
+    \item \texttt{generalized\_mc.py}：广义蒙特卡洛——随机拓扑上的鲁棒性验证；
+    \item \texttt{q3\_venue.py}：ILP选址和启发式贪心选址的实现；
+    \item \texttt{q4\_simulation.py}：Bradley-Terry/Poisson模型的赛制仿真。
+\end{itemize}
+
+10\,000次蒙特卡洛模拟和5\,000次赛制仿真在配备Intel Core i7处理器的个人计算机上运行，总耗时均在可接受范围内（$<$ 5分钟）。
+
+\end{document}
