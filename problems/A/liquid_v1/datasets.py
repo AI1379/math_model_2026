@@ -1,10 +1,10 @@
-"""Datasets for the v1 bottle liquid training stack.
+"""Datasets for the bottle liquid training stack.
 
-This module intentionally supports the two datasets currently under
-`problems/A/datasets` even though their layouts differ:
+Supports three datasets:
 
-1. LCDTC (COCO-style detection annotations)
-2. Segmenting Transparent Objects in the Wild (image/mask pairs, often zipped)
+1. LCDTC (COCO-style detection annotations, 5-class state labels)
+2. Segmenting Transparent Objects in the Wild (image/mask pairs)
+3. LiquiContain (YOLO polygon segmentation, bottle + liquid masks, no state labels)
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 from torchvision.transforms import ColorJitter
 from torchvision.transforms import functional as TF
@@ -471,6 +471,211 @@ class TransparentObjectSegDataset(BaseBottleDataset):
             "binary_label": torch.tensor(-1.0, dtype=torch.float32),
             "has_bottle_mask": torch.tensor(1, dtype=torch.bool),
             "has_liquid_mask": torch.tensor(0, dtype=torch.bool),
+            "has_state_label": torch.tensor(0, dtype=torch.bool),
+            "task_id": torch.tensor(record.task_id, dtype=torch.long),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# LiquiContain (Torres 2026) — YOLO polygon segmentation dataset
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+
+def _polygons_to_mask(
+    polygons: List[List[Tuple[float, float]]],
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Convert normalized polygon vertices to a binary mask."""
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    for poly in polygons:
+        if len(poly) < 3:
+            continue
+        pixels = [(x * width, y * height) for x, y in poly]
+        draw.polygon(pixels, fill=255)
+    return np.array(mask, dtype=np.uint8)
+
+
+class LiquiContainDataset(BaseBottleDataset):
+    """LiquiContain (Torres 2026) — YOLO polygon annotation dataset.
+
+    Reads YOLO-format polygon labels from Roboflow:
+      - 0: bottle
+      - 1: glass
+      - 2: liquid
+      - 3: wine-glass
+
+    Bottle mask = union(bottle, glass, wine-glass).
+    Liquid mask = liquid.
+    Binary label = 1 if liquid polygon(s) exist, 0 otherwise.
+    No state labels (task_id=2).
+    """
+
+    # Classes that contribute to bottle_mask
+    BOTTLE_CLASSES = {0, 1, 3}  # bottle, glass, wine-glass
+    LIQUID_CLASS = 2
+
+    def __init__(
+        self,
+        data_dir: str | Path,
+        split: str = "train",
+        image_size: int = 320,
+        context: float = 0.12,
+        train: Optional[bool] = None,
+        max_samples: Optional[int] = None,
+    ) -> None:
+        super().__init__(
+            image_size=image_size,
+            train=(split == "train") if train is None else train,
+            context=context,
+            color_jitter=0.2,
+        )
+        self.data_dir = Path(data_dir)
+        self.split = split
+        self.image_dir = self.data_dir / split / "images"
+        self.label_dir = self.data_dir / split / "labels"
+
+        if not self.image_dir.exists():
+            raise FileNotFoundError(f"Image directory not found: {self.image_dir}")
+        if not self.label_dir.exists():
+            raise FileNotFoundError(f"Label directory not found: {self.label_dir}")
+
+        self.records = self._build_records(max_samples=max_samples)
+
+    def _build_records(self, max_samples: Optional[int]) -> List[SampleRecord]:
+        records: List[SampleRecord] = []
+        for label_path in sorted(self.label_dir.glob("*.txt")):
+            stem = label_path.name.replace(".txt", "")
+            # Find matching image (Roboflow adds .rf.xxx suffix, try multiple extensions)
+            image_path = None
+            for ext in (".jpg", ".png", ".jpeg"):
+                candidate = self.image_dir / f"{stem}{ext}"
+                if candidate.exists():
+                    image_path = candidate
+                    break
+            if image_path is None:
+                continue
+
+            # Parse YOLO polygon labels to determine has_bottle / has_liquid
+            polygons = self._parse_label(label_path)
+            has_bottle = any(
+                cls_id in self.BOTTLE_CLASSES for cls_id, _ in polygons
+            )
+            has_liquid = any(
+                cls_id == self.LIQUID_CLASS for cls_id, _ in polygons
+            )
+            binary_label = 1 if has_liquid else 0
+
+            records.append(
+                SampleRecord(
+                    image_key=str(image_path),
+                    mask_key=str(label_path),
+                    bbox_xyxy=None,
+                    state_label=-1,
+                    binary_label=binary_label,
+                    has_bottle_mask=has_bottle,
+                    has_liquid_mask=has_liquid,
+                    task_id=2,
+                )
+            )
+
+        if max_samples is not None:
+            records = records[:max_samples]
+        return records
+
+    @staticmethod
+    def _parse_label(
+        label_path: Path,
+    ) -> List[Tuple[int, List[Tuple[float, float]]]]:
+        """Parse a YOLO polygon label file.
+
+        Each line: class_id x1 y1 x2 y2 ... xn yn
+        Returns list of (class_id, [(x,y), ...]).
+        """
+        results: List[Tuple[int, List[Tuple[float, float]]]] = []
+        with label_path.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 7:  # class_id + at least 3 points
+                    continue
+                cls_id = int(float(parts[0]))
+                coords = parts[1:]
+                if len(coords) % 2 != 0:
+                    continue
+                points = [
+                    (float(coords[j]), float(coords[j + 1]))
+                    for j in range(0, len(coords), 2)
+                ]
+                results.append((cls_id, points))
+        return results
+
+    def _make_masks(
+        self,
+        polygons: List[Tuple[int, List[Tuple[float, float]]]],
+        width: int,
+        height: int,
+    ) -> Tuple[Image.Image, Image.Image]:
+        """Build bottle and liquid PIL masks from parsed polygons."""
+        bottle_polys = [
+            pts for cls_id, pts in polygons if cls_id in self.BOTTLE_CLASSES
+        ]
+        liquid_polys = [
+            pts for cls_id, pts in polygons if cls_id == self.LIQUID_CLASS
+        ]
+
+        bottle_np = _polygons_to_mask(bottle_polys, width, height)
+        liquid_np = _polygons_to_mask(liquid_polys, width, height)
+
+        bottle_mask = Image.fromarray(bottle_np, mode="L")
+        liquid_mask = Image.fromarray(liquid_np, mode="L")
+        return bottle_mask, liquid_mask
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        record = self.records[idx]
+        image = _safe_open_image(Path(record.image_key))
+        polygons = self._parse_label(Path(record.mask_key or ""))
+
+        bottle_mask, liquid_mask = self._make_masks(
+            polygons, image.width, image.height
+        )
+
+        # Compute bounding box from combined masks and crop
+        bottle_np = np.array(bottle_mask)
+        liquid_np = np.array(liquid_mask)
+        combined = np.maximum(bottle_np, liquid_np)
+        bbox = _bbox_from_mask(combined)
+        image, bottle_mask = _crop_image_and_mask(
+            image, bottle_mask, bbox, self.context
+        )
+        _, liquid_mask = _crop_image_and_mask(
+            image, liquid_mask, bbox, self.context
+        )
+
+        image, bottle_mask, liquid_mask = self._augment(
+            image, bottle_mask, liquid_mask
+        )
+        image_t, bottle_t, liquid_t = self._to_tensor(
+            image, bottle_mask, liquid_mask
+        )
+        return {
+            "image": image_t,
+            "bottle_mask": bottle_t,
+            "liquid_mask": liquid_t,
+            "state_label": torch.tensor(record.state_label, dtype=torch.long),
+            "binary_label": torch.tensor(record.binary_label, dtype=torch.float32),
+            "has_bottle_mask": torch.tensor(
+                1 if record.has_bottle_mask else 0, dtype=torch.bool
+            ),
+            "has_liquid_mask": torch.tensor(
+                1 if record.has_liquid_mask else 0, dtype=torch.bool
+            ),
             "has_state_label": torch.tensor(0, dtype=torch.bool),
             "task_id": torch.tensor(record.task_id, dtype=torch.long),
         }
