@@ -651,12 +651,11 @@ class LiquiContainDataset(BaseBottleDataset):
         liquid_np = np.array(liquid_mask)
         combined = np.maximum(bottle_np, liquid_np)
         bbox = _bbox_from_mask(combined)
-        image, bottle_mask = _crop_image_and_mask(
-            image, bottle_mask, bbox, self.context
-        )
-        _, liquid_mask = _crop_image_and_mask(
-            image, liquid_mask, bbox, self.context
-        )
+        expanded = _expand_box(bbox, image.width, image.height, self.context) if bbox is not None else None
+        if expanded is not None:
+            image = image.crop(expanded)
+            bottle_mask = bottle_mask.crop(expanded)
+            liquid_mask = liquid_mask.crop(expanded)
 
         image, bottle_mask, liquid_mask = self._augment(
             image, bottle_mask, liquid_mask

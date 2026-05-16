@@ -5,6 +5,7 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{caption}
 %\usepackage{multirow}
 \usepackage{hyperref}
 \usepackage{algorithm}
@@ -37,8 +38,8 @@
 ILP均衡方案实现了$F_1=0$、$F_2=0.484$、$F_2'=1$的最优均衡性能。
 其次，设计了城市优先回溯抽签法，通过最少剩余值优先（MRV）和前向检查剪枝，配合$\,\textit{repair\_swap}\,$修复机制，在10\,000次蒙特卡洛模拟中实现零死锁率和96.15\%的C3完美满足率。
 从图论角度利用Hall婚配定理给出了可行性的严格证明，并通过与重启策略的对比实验证明修复策略不劣化实力均衡。
-第三，将选址问题建模为设施选址与带容量指派问题，ILP求解得到总旅行距离7\,617\,km的最优选址方案，较启发式方法降低30.8\%。
-第四，基于Bradley-Terry和Poisson进球模型进行5\,000次赛事仿真，发现当前赛制的Spearman相关系数均值为0.569，而双循环小组赛可将其提升至0.641。
+第三，将选址问题建模为设施选址与带容量指派问题，ILP求解得到总旅行距离7\,617\,km的最优选址方案，较启发式方法降低30.8\%，并进一步用公路时间、铁路时间、综合时间和人口加权时间检验选址敏感性。
+第四，基于Bradley-Terry胜负模型进行5\,000次赛事仿真，发现当前赛制的Spearman相关系数均值为0.569，而双循环小组赛可将其提升至0.641。
 最后，通过广义蒙特卡洛方法在200个随机行政拓扑上验证了模型结论的鲁棒性。
 \end{abstract}
 
@@ -107,9 +108,9 @@ ILP均衡方案实现了$F_1=0$、$F_2=0.484$、$F_2'=1$的最优均衡性能。
 {\renewcommand{\labelenumi}{\textbf{(\arabic{enumi})}}
 \begin{enumerate}
     \item 题目未给出各队真实竞技水平，采用层级赋权法近似实力：市级队$s=3$，县级市队$s=2$，县队$s=1$。
-    \item 比赛地点之间的距离采用球面坐标下的大圆距离（haversine公式）计算。
-    \item 城市影响力得分基于城市行政级别、人口规模和GDP综合评定。
-    \item 单场比赛结果服从Bradley-Terry模型或Poisson进球模型，不考虑临场发挥之外的系统性因素。
+    \item 基准选址模型采用球面坐标下的大圆距离（haversine公式）计算旅行距离；扩展模型进一步引入公路、铁路旅行时间矩阵。
+    \item 城市影响力和赛事普及面用常住人口、交通可达性等公开指标近似刻画。
+    \item 单场胜负结果服从Bradley-Terry模型；小组同分排序中的进球数用Poisson随机量近似，不考虑临场发挥之外的系统性因素。
 \end{enumerate}}
 
 \subsection{符号说明}
@@ -256,16 +257,20 @@ G_j = \frac{2}{|G_j|(|G_j|-1)} \sum_{a<b,\ a,b \in G_j} d_{ab}
 \text{s.t.} \quad & \text{式}(\ref{eq:assign}), (\ref{eq:C1}), (\ref{eq:C2}) \nonumber
 \end{align}
 
-使用OR-Tools的CP-SAT求解器求解。
+代码实现中使用PuLP调用COIN-OR CBC求解器求解。
 
 \subsubsection{方案D：ILP均衡优化}
 
-以$F_2$（实力标准差）最小化为目标，$F_1=0$（C3完全满足）作为硬约束：
+实际求解时先将C3冲突对数作为高权重目标，再最小化组间实力极差。令同市县级队配对变量$u_{pj}$表示配对$p$是否同落入组$j$，并引入$S_{\max}$、$S_{\min}$约束各组实力和，则目标为
 
 \begin{align}
-\min \quad & \sqrt{\frac{1}{16} \sum_{j=1}^{16} (S_j - \bar{S})^2} \\
-\text{s.t.} \quad & \text{式}(\ref{eq:assign}), (\ref{eq:C1}), (\ref{eq:C2}), (\ref{eq:C3_hard}) \nonumber
+\min \quad & w_1\sum_{p,j} u_{pj} + w_2(S_{\max}-S_{\min}) \\
+\text{s.t.} \quad & \text{式}(\ref{eq:assign}), (\ref{eq:C1}), (\ref{eq:C2}) \nonumber \\
+& u_{pj} \ge x_{a_p,j}+x_{b_p,j}-1,\quad \forall p=(a_p,b_p),j \nonumber \\
+& S_{\max}\ge S_j,\quad S_{\min}\le S_j,\quad \forall j . \nonumber
 \end{align}
+
+本题中取$w_1=10,w_2=1$，求解结果自然达到$F_1=0$，同时将实力极差压缩到1。表中报告的$F_2$仍按式(\ref{eq:F2})计算，用于与其他方案统一比较。
 
 \subsection{实验结果与方案对比}
 
@@ -482,11 +487,11 @@ $\mathbb{E}[F_3]$ & 1.386* & 1.385 & 1.386 \\
 将旅行距离、主场优势、城市影响力和区域均衡等多个软约束合并为等效成本：
 
 \begin{equation}
-c_{ik} = \alpha d_{ik} + \beta h_{ik} - \gamma I_k + \delta r_k
+c_{ik} = \alpha d_{ik} + \beta h_{ik} - \gamma I_k + \delta r_k + \eta b_{ik}
 \label{eq:cost}
 \end{equation}
 
-其中：$d_{ik}$为球队$i$到场地$k$的距离，$h_{ik}$为主场惩罚（球队在主场所在城市比赛时加罚），$I_k$为场地$k$的城市影响力得分，$r_k$为区域失衡惩罚。
+其中：$d_{ik}$为球队$i$到场地$k$的距离或旅行时间，$h_{ik}$为主场惩罚（球队在主场所在城市比赛时加罚），$I_k$为场地$k$的城市影响力得分，$r_k$为区域失衡惩罚，$b_{ik}$为山区、海岛或跨湾交通不便带来的修正项。基准模型取$\alpha=1$且其余权重为0，用大圆距离衡量便利性；扩展模型分别用公路时间、铁路时间、综合时间和人口加权时间替换$d_{ik}$。
 
 \subsubsection{ILP模型}
 
@@ -518,13 +523,28 @@ c_{ik} = \alpha d_{ik} + \beta h_{ik} - \gamma I_k + \delta r_k
 
 作为对照，使用地理分散贪心法：优先选择与已选场地距离最远的候选地点，逐步构建8个场地的集合。
 
+\subsubsection{拉格朗日松弛（理论补充）}
+
+为给出不依赖ILP求解器的可解释下界，将每个场地恰好承办两个小组的容量约束松弛到目标函数中：
+
+\begin{equation}
+L(\lambda)=\min_{y,z}\left\{\sum_{g,k}(C_{gk}+\lambda_k)z_{gk}-2\sum_k\lambda_k y_k\right\}.
+\label{eq:lagrangian}
+\end{equation}
+
+对任意$\lambda$，$L(\lambda)$均为原问题的下界。通过次梯度
+\begin{equation}
+\gamma_k=\sum_g z_{gk}-2y_k
+\end{equation}
+迭代更新$\lambda_k$，并将松弛解修复为满足容量约束的可行解，可以同时得到下界、上界和场地容量的“影子价格”。该方法在程序中作为ILP结果的理论校验和大规模扩展场景的备选算法。
+
 \subsection{实验结果}
 
 \begin{table}[H]
 \centering
 \caption{ILP最优选址结果（基于方案D分组）}
 \label{tab:q3_ilp}
-\begin{tabular}{lccccc}
+\begin{tabular}{lcccc}
 \toprule
 场地 & 经度 & 纬度 & 承办小组 & 组均距离 \\
 \midrule
@@ -556,6 +576,31 @@ ILP最优选址 & \textbf{7\,617 km} & \textbf{119.0 km} & \textbf{337 km} \\
 
 ILP最优选址较启发式方法减少了30.8\%的总旅行距离。选址结果分布在浙中偏南区域（纬28.85°--30.04°N，经119.81°--121.15°E），整体上覆盖了浙江省的主要人口和经济中心区域，兼顾了浙北（余姚）、浙中（东阳、永康、武义、浦江、磐安）和浙南（新昌、仙居），具有良好的区域均衡性。
 
+\subsection{多维成本模型对比}
+
+仅用直线距离会低估海岛、山区和跨水域交通成本，因此进一步构造了五类成本矩阵：haversine距离、公路旅行时间、铁路旅行时间、公铁平均综合时间、人口加权公路时间。表\ref{tab:q3_cost_models}给出同一ILP模型在不同成本定义下的求解结果。由于扩展模型使用了更新后的外部交通矩阵和坐标数据，其haversine基准为7\,648\,km，与前述7\,617\,km基准差异来自坐标源和四舍五入。
+
+\begin{table}[H]
+\centering
+\caption{不同成本模型下的ILP选址结果对比}
+\label{tab:q3_cost_models}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\toprule
+成本模型 & 总成本 & 单位 & 平均/队 & 对应haversine距离 \\
+\midrule
+haversine & 7\,648 & km & 119.5 & 7\,648 km \\
+公路时间 & 8\,154 & min & 127.4 & 8\,317 km \\
+铁路时间 & 6\,366 & min & 99.5 & 8\,273 km \\
+综合时间 & 7\,542 & min & 117.8 & 8\,187 km \\
+人口加权 & 546\,399 & 万人$\cdot$min & 8\,537.5 & 8\,985 km \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+多维模型显示，不同成本定义会明显改变场地集合：haversine与人口加权模型的场地交集为0/8，而公路、铁路、综合时间模型之间通常有3--4个共同场地。杭州市、金华市、义乌市均被4/5个模型选中，永康市被3/5个模型选中，说明这些地点在交通可达性和赛事影响力之间具有较强稳健性。若赛事组织者更重视实际交通体验，应优先采用综合时间模型；若更重视观众覆盖和传播效果，可采用人口加权模型作为补充。
+
 \subsection{选址的等效成本扩展}
 
 在等效成本框架下，还可以进一步纳入以下考量：
@@ -579,27 +624,27 @@ P(i \text{ 胜 } j) = \frac{s_i}{s_i + s_j}
 \label{eq:bt}
 \end{equation}
 
-\subsubsection{Poisson进球模型}
+\subsubsection{同分排序与进球数扰动}
 
-为更真实地模拟足球比赛（包含平局），引入Poisson进球模型：
+主仿真聚焦赛制公平性，因此单场只判胜负，不引入平局。小组赛积分相同时，用进球数作为第二排序指标；为避免完全确定性的并列排序，令球队$i$在单场中的进球贡献近似服从Poisson分布：
 
 \begin{equation}
-G_i \sim \text{Poisson}(\lambda_i),\quad G_j \sim \text{Poisson}(\lambda_j)
+G_i \sim \text{Poisson}(0.5+0.3s_i).
 \label{eq:poisson}
 \end{equation}
 
-其中$\lambda_i = \lambda_0 \cdot s_i / \bar{s}$，$\lambda_0$为基础进球期望（设$\lambda_0 = 1.3$），$\bar{s}$为所有参赛队平均实力。
+该Poisson项只用于同分时的进球数比较，不改变Bradley-Terry模型给出的胜负概率。
 
 \subsubsection{实力赋值}
 
-采用层级基准分+小扰动的方式：
+主仿真采用与分组模型一致的层级赋权：
 
 \begin{equation}
-s_i = s_{\text{level}} + \epsilon_i,\quad \epsilon_i \sim \mathcal{N}(0, 0.2^2)
+s_i=s_{\text{level}},\quad s_{\text{level}}\in\{3,2,1\}.
 \label{eq:strength}
 \end{equation}
 
-其中$s_{\text{level}} \in \{3, 2, 1\}$（市/县级市/县），确保实力存在连续差异以供排名分析。
+其中市级队为3，县级市队为2，县队为1。由于同一层级内存在并列，Spearman相关系数采用并列秩处理；冠军集中度中的Top-8指标可理解为最高实力层球队夺冠概率的近似刻画。
 
 \subsection{评价指标}
 
@@ -670,7 +715,7 @@ Spearman 95\%分位 & 0.698 & 0.758 \\
 
 \subsection{赛制参数敏感性分析}
 
-为进一步验证结论的稳健性，对关键参数进行了敏感性分析：
+在主仿真之外，进一步对比赛结果随机性和淘汰赛轮制做敏感性分析。这里的目的不是重新标定球队真实实力，而是检验“增加小组赛样本量能提升公平性”这一结论是否稳定：
 
 \begin{table}[H]
 \centering
@@ -680,8 +725,8 @@ Spearman 95\%分位 & 0.698 & 0.758 \\
 \toprule
 参数变化 & Spearman变化 & 晋级率变化 \\
 \midrule
-$\lambda_0$：1.0 $\to$ 2.0 & $+0.011$ & $+0.008$ \\
-$\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
+进球均值扰动：$\lambda_0$由1.0增至2.0 & $+0.011$ & $+0.008$ \\
+层内实力扰动：$\sigma_\epsilon$由0.1增至0.4 & $-0.023$ & $-0.015$ \\
 淘汰赛改为两回合（8强起） & $+0.038$ & $+0.031$ \\
 小组赛出线名额：1名/组 & $+0.072$ & —* \\
 \bottomrule
@@ -751,7 +796,7 @@ $\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
 实验在三个层次上验证了模型的鲁棒性：
 
 \begin{enumerate}[L1:]
-    \item \textbf{参数敏感性}：改变实力赋值参数（$\lambda_0$、$\sigma_\epsilon$），结论保持稳定。
+    \item \textbf{参数敏感性}：改变比赛随机性和层内实力扰动参数（$\lambda_0$、$\sigma_\epsilon$），结论保持稳定。
     \item \textbf{结构敏感性}：在200个随机行政拓扑上，修复策略的优势和F2等价性始终成立。
     \item \textbf{下游验证}：选址和赛制分析的结论在随机拓扑上保持稳健，证明不是对浙江省特定数据的过拟合。
 \end{enumerate}
@@ -765,7 +810,7 @@ $\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
 
     \item \textbf{抽签方案}：设计了城市优先回溯抽签法，通过MRV、前向检查和修复机制实现零死锁率、96.15\%的C3完美满足率。利用Hall婚配定理给出了可行性的理论保证，并通过10\,000次蒙特卡洛模拟和200个随机拓扑的广义蒙特卡洛实验验证了结论的鲁棒性。
 
-    \item \textbf{比赛地点}：建立了设施选址+带容量指派的ILP模型，得到总旅行距离7\,617\,km的最优方案，较启发式方法降低30.8\%。
+    \item \textbf{比赛地点}：建立了设施选址+带容量指派的ILP模型，得到总旅行距离7\,617\,km的最优方案，较启发式方法降低30.8\%。多维成本实验表明，交通时间和人口加权会改变具体场地集合，但杭州市、金华市、义乌市等高频场地具有较强稳健性。
 
     \item \textbf{赛制建议}：通过5\,000次赛事仿真，定量证明双循环小组赛可将公平性指标（Spearman相关系数）从0.569提升至0.641，并给出了种子分档、交叉对阵、关键轮次两回合制等具体改进建议。
 
@@ -783,7 +828,6 @@ $\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
 \bibitem{csp} Russell S, Norvig P. \textit{Artificial Intelligence: A Modern Approach}. 4th ed. Pearson, 2020.
 \bibitem{topsis} Hwang C L, Yoon K. \textit{Multiple Attribute Decision Making: Methods and Applications}. Springer, 1981.
 \bibitem{spearman} Spearman C. The proof and measurement of association between two things. \textit{The American Journal of Psychology}, 1904, 15(1): 72--101.
-\bibitem{poisson} Maher M J. Modelling association football scores. \textit{Statistica Neerlandica}, 1982, 36(3): 109--118.
 \bibitem{montecarlo} Metropolis N, Ulam S. The Monte Carlo method. \textit{Journal of the American Statistical Association}, 1949, 44(247): 335--341.
 \end{thebibliography}
 
@@ -829,19 +873,55 @@ $\sigma_\epsilon$：0.1 $\to$ 0.4 & $-0.023$ & $-0.015$ \\
 \end{verbatim}
 }
 
-\section*{附录B：算法实现说明}
+\section*{附录B：代码、文档与实验资产说明}
 
-全部算法使用Python 3实现，主要依赖NumPy、OR-Tools和SciPy库。
+本题所有实现均位于\texttt{problems/B/}目录，使用Python 3完成，主要依赖NumPy、SciPy和PuLP/COIN-OR CBC求解器。各文件与论文内容的对应关系如下。
 
-\begin{itemize}
-    \item \texttt{q1\_grouping.py}：四种分组方案（贪心、蛇形、ILP-C3最小、ILP均衡）的实现；
-    \item \texttt{q2\_draw.py}：城市优先回溯抽签法和分档抽签法的实现；
-    \item \texttt{strategy\_comparison.py}：修复策略vs重启策略的配对对比实验；
-    \item \texttt{generalized\_mc.py}：广义蒙特卡洛——随机拓扑上的鲁棒性验证；
-    \item \texttt{q3\_venue.py}：ILP选址和启发式贪心选址的实现；
-    \item \texttt{q4\_simulation.py}：Bradley-Terry/Poisson模型的赛制仿真。
-\end{itemize}
+\begin{table}[H]
+\centering
+\caption*{B题代码文件与作用}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{5.0cm}p{9.8cm}}
+\toprule
+文件 & 作用 \\
+\midrule
+\texttt{q1\_grouping.py} & 球队数据、约束检查、四类分组方案和$F_1,F_2,F_2',F_3$指标计算 \\
+\texttt{q2\_draw.py} & 城市优先抽签、分档抽签和10\,000次蒙特卡洛模拟 \\
+\texttt{strategy\_comparison.py} & 贪心无修复、修复、重启三种抽签策略的配对比较 \\
+\texttt{q3\_venue.py} & 基准haversine距离下的ILP选址与地理分散贪心对比 \\
+\texttt{q3\_venue\_v2.py} & 公路、铁路、综合时间和人口加权成本下的多维选址对比 \\
+\texttt{q3\_lagrangian.py} & 拉格朗日松弛、次梯度优化、有效下界和影子价格分析 \\
+\texttt{q4\_simulation.py} & Bradley-Terry赛制仿真与单/双循环比较 \\
+\texttt{generalized\_mc.py} & 随机行政拓扑上的抽签鲁棒性验证 \\
+\texttt{q3\_q4\_generalized.py} & 随机拓扑下选址和赛制对$\tau$的相关性检验 \\
+\texttt{plot\_generalized.py} & 生成鲁棒性分析图表 \\
+\texttt{teammate\_draw\_combined.py} & 队友朴素抽签/重试方案的复现与对比基线 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-10\,000次蒙特卡洛模拟和5\,000次赛制仿真在配备Intel Core i7处理器的个人计算机上运行，总耗时均在可接受范围内（$<$ 5分钟）。
+\begin{table}[H]
+\centering
+\caption*{文档、输出和数据文件}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{5.0cm}p{9.8cm}}
+\toprule
+文件或目录 & 内容 \\
+\midrule
+\texttt{solution.md} & 初版总体建模思路 \\
+\texttt{solution-v2.md} & 四问整体主线、算法选择和论文组织建议 \\
+\texttt{solution-q3.md} & 选址问题算法综述、ILP/启发式/拉格朗日等方法比较 \\
+\texttt{comparison\_q2.md} & 我方抽签与队友抽签方案的系统比较、死锁反例和修复分析 \\
+\texttt{q1\_output.txt}--\texttt{q4\_output.txt} & 四问主实验输出，用于正文表格取数 \\
+\texttt{q3\_output\_v2.txt} & 多维交通成本选址实验输出 \\
+\texttt{figures/} & 泛化实验和紧度分析的9张图 \\
+\texttt{conditions\_q3/} & 坐标、常住人口、可支配收入、公路和铁路旅行时间矩阵等外部数据 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+10\,000次抽签蒙特卡洛模拟、5\,000次赛制仿真和200个随机拓扑的广义蒙特卡洛实验均可由上述脚本复现。正文采用的主要数值来自\texttt{q1\_output.txt}、\texttt{q2\_output.txt}、\texttt{q3\_output.txt}、\texttt{q3\_output\_v2.txt}和\texttt{q4\_output.txt}。
 
 \end{document}
