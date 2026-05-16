@@ -19,6 +19,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
+import random
 from collections import defaultdict
 from q1_grouping import (
     CITY_DATA, TEAMS, TEAM_INDEX, NUM_GROUPS, GROUP_SIZE,
@@ -200,7 +201,8 @@ def run_experiment(n_seeds=10000):
                         "retries": []},
     }
 
-    for seed in range(n_seeds):
+    for sd in range(n_seeds):
+        seed = random.randint(0, 2**31 - 1)  # 生成一个随机种子
         rng = np.random.default_rng(seed)
 
         # --- 策略1: 无修复 ---
