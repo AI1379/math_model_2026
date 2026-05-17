@@ -91,6 +91,16 @@ def match_result(rng, strength_i, strength_j):
         return 0, 3
 
 
+def generate_goals(rng, s_i, s_j):
+    """
+    Poisson 进球数, 同时依赖攻方和守方实力.
+    lambda_ij = 0.5 + 0.2*s_i - 0.1*s_j, 保证 >= 0.1.
+    仅用于同分排序, 不影响 BT 胜负概率.
+    """
+    lam = max(0.1, 0.5 + 0.2 * s_i - 0.1 * s_j)
+    return rng.poisson(lam)
+
+
 def simulate_group_stage(rng, groups, team_strengths):
     """
     模拟小组赛 (单循环).
@@ -109,9 +119,9 @@ def simulate_group_stage(rng, groups, team_strengths):
             sa, sb = match_result(rng, team_strengths[ia], team_strengths[ib])
             points[ia] += sa
             points[ib] += sb
-            # 模拟进球数 (Poisson, 均值与实力成正比)
-            gf_a = rng.poisson(0.5 + team_strengths[ia] * 0.3)
-            gf_b = rng.poisson(0.5 + team_strengths[ib] * 0.3)
+            # 模拟进球数 (Poisson, 依赖攻守双方实力)
+            gf_a = generate_goals(rng, team_strengths[ia], team_strengths[ib])
+            gf_b = generate_goals(rng, team_strengths[ib], team_strengths[ia])
             goals_for[ia] += gf_a
             goals_for[ib] += gf_b
 
@@ -290,8 +300,8 @@ def simulate_double_round_robin_group(rng, groups, team_strengths):
                 sa, sb = match_result(rng, team_strengths[ia], team_strengths[ib])
                 points[ia] += sa
                 points[ib] += sb
-                gf_a = rng.poisson(0.5 + team_strengths[ia] * 0.3)
-                gf_b = rng.poisson(0.5 + team_strengths[ib] * 0.3)
+                gf_a = generate_goals(rng, team_strengths[ia], team_strengths[ib])
+                gf_b = generate_goals(rng, team_strengths[ib], team_strengths[ia])
                 goals_for[ia] += gf_a
                 goals_for[ib] += gf_b
 
