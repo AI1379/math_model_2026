@@ -8,8 +8,8 @@ Q4: 浙超赛制合理化建议 — 蒙特卡洛仿真
 评价指标:
   - 公平性: 实力排名与最终名次的 Spearman 相关系数
   - 晋级准确率: 实力前 32 名实际晋级的比例
-  - 爆冷率: 弱队淘汰强队的场次占比
   - 冠军集中度: 实力 Top-1 的夺冠概率
+  - 稳健性: 层内正态扰动 s_i ~ N(s_level, (1/3)^2)
 """
 
 import sys
@@ -21,17 +21,37 @@ import numpy as np
 from collections import defaultdict
 from scipy import stats
 from q1_grouping import (
-    CITY_DATA,
     TEAMS,
     TEAM_INDEX,
-    NUM_GROUPS,
-    GROUP_SIZE,
-    LEVEL_TAG,
     check_c1,
     check_c2,
     check_c3,
 )
-from q1_grouping import scheme_d_ilp_balanced
+
+
+# 方案D: ILP(均衡), 来自 q1_output.txt.
+# Q4只评价赛制, 固定分组可避免每次运行都重新求解ILP。
+BALANCED_GROUPS = [
+    ["龙港市", "德清县", "东阳市", "三门县"],
+    ["嘉善县", "金华市", "岱山县", "庆元县"],
+    ["永嘉县", "平湖市", "长兴县", "舟山市"],
+    ["温州市", "海盐县", "诸暨市", "磐安县"],
+    ["余姚市", "安吉县", "浦江县", "丽水市"],
+    ["杭州市", "象山县", "兰溪市", "常山县"],
+    ["宁波市", "江山市", "仙居县", "青田县"],
+    ["建德市", "苍南县", "龙游县", "温岭市"],
+    ["武义县", "衢州市", "玉环市", "云和县"],
+    ["文成县", "绍兴市", "永康市", "开化县"],
+    ["宁海县", "嘉兴市", "义乌市", "遂昌县"],
+    ["瑞安市", "海宁市", "新昌县", "松阳县"],
+    ["桐庐县", "乐清市", "临海市", "景宁县"],
+    ["淳安县", "慈溪市", "台州市", "缙云县"],
+    ["平阳县", "桐乡市", "嵊州市", "龙泉市"],
+    ["泰顺县", "湖州市", "嵊泗县", "天台县"],
+]
+
+LAYER_SIGMA = 1 / 3
+MIN_STRENGTH = 0.05
 
 
 # ============================================================
@@ -43,6 +63,21 @@ from q1_grouping import scheme_d_ilp_balanced
 # [解决] 采用 Bradley-Terry 模型 P(i胜j) = s_i/(s_i+s_j),
 #        不考虑平局. 小组赛积分: 胜=3分, 负=0分.
 #        如果需要更真实的模型, 可引入随机进球数 (Poisson).
+
+def draw_layered_strengths(rng, sigma=LAYER_SIGMA, min_strength=MIN_STRENGTH):
+    """
+    层内正态实力模型.
+    以 3/2/1 为层级均值, 每次赛事先抽取一组潜在真实实力.
+    为保证 Bradley-Terry 概率有效, 对极小概率的非正抽样做截断重抽.
+    """
+    means = np.array([t.strength for t in TEAMS], dtype=float)
+    strengths = rng.normal(means, sigma)
+    invalid = strengths <= min_strength
+    while np.any(invalid):
+        strengths[invalid] = rng.normal(means[invalid], sigma)
+        invalid = strengths <= min_strength
+    return strengths
+
 
 def match_result(rng, strength_i, strength_j):
     """
@@ -271,6 +306,9 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
     strength_rank = stats.rankdata([-s for s in team_strengths])
     spearmans = []
     top32_rates = []
+    champion_top1 = 0
+    champion_top4 = 0
+    champion_top8 = 0
 
     for _ in range(n_sim):
         group_rankings = simulate_double_round_robin_group(rng, groups, team_strengths)
@@ -283,6 +321,13 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
         top32_rates.append(top32_actual / 32)
 
         champion, final_ranking = simulate_knockout(rng, qualified, team_strengths)
+        if strength_rank[champion] <= 1:
+            champion_top1 += 1
+        if strength_rank[champion] <= 4:
+            champion_top4 += 1
+        if strength_rank[champion] <= 8:
+            champion_top8 += 1
+
         group_losers = []
         for ranking in group_rankings:
             group_losers.extend(ranking[2:])
@@ -293,7 +338,73 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
         rho, _ = stats.spearmanr(pos, actual_strength_ranks)
         spearmans.append(rho)
 
-    return {"spearman": np.array(spearmans), "top32_rate": np.array(top32_rates)}
+    return {
+        "spearman": np.array(spearmans),
+        "top32_rate": np.array(top32_rates),
+        "champion_top1": champion_top1 / n_sim,
+        "champion_top4": champion_top4 / n_sim,
+        "champion_top8": champion_top8 / n_sim,
+    }
+
+
+def compute_randomized_strength_metrics(
+    groups,
+    n_sim,
+    group_stage_func,
+    sigma=LAYER_SIGMA,
+    strength_seed=2026,
+    match_seed=4200,
+):
+    """每次赛事先抽取层内正态实力, 再模拟小组赛和淘汰赛。"""
+    rng_strength = np.random.default_rng(strength_seed)
+    rng_match = np.random.default_rng(match_seed)
+
+    spearmans = []
+    top32_rates = []
+    champion_top1 = 0
+    champion_top4 = 0
+    champion_top8 = 0
+
+    for _ in range(n_sim):
+        team_strengths = draw_layered_strengths(rng_strength, sigma=sigma)
+        strength_rank = stats.rankdata([-s for s in team_strengths], method="ordinal")
+
+        group_rankings = group_stage_func(rng_match, groups, team_strengths)
+        qualified = []
+        for ranking in group_rankings:
+            qualified.extend(ranking[:2])
+
+        top32_actual = sum(1 for i in range(len(team_strengths))
+                          if strength_rank[i] <= 32 and i in qualified)
+        top32_rates.append(top32_actual / 32)
+
+        champion, final_ranking = simulate_knockout(rng_match, qualified, team_strengths)
+        if strength_rank[champion] <= 1:
+            champion_top1 += 1
+        if strength_rank[champion] <= 4:
+            champion_top4 += 1
+        if strength_rank[champion] <= 8:
+            champion_top8 += 1
+
+        group_losers = []
+        for ranking in group_rankings:
+            group_losers.extend(ranking[2:])
+        group_losers.sort(key=lambda i: team_strengths[i], reverse=True)
+        full_ranking = final_ranking + group_losers
+
+        pos = list(range(1, 65))
+        actual_strength_ranks = [strength_rank[i] for i in full_ranking]
+        rho, _ = stats.spearmanr(pos, actual_strength_ranks)
+        spearmans.append(rho)
+
+    return {
+        "spearman": np.array(spearmans),
+        "top32_rate": np.array(top32_rates),
+        "champion_top1": champion_top1 / n_sim,
+        "champion_top4": champion_top4 / n_sim,
+        "champion_top8": champion_top8 / n_sim,
+        "sigma": sigma,
+    }
 
 
 # ============================================================
@@ -317,6 +428,20 @@ def print_metrics(m, label, n_sim):
     print(f"    P(实力前8名夺冠)={m['champion_top8']:.4f}")
 
 
+def print_comparison_table(title, rows):
+    print(f"\n{'=' * 72}")
+    print(f"  {title}")
+    print(f"{'=' * 72}")
+    print(f"  {'赛制':<22} {'Spearman':<10} {'晋级率':<10} "
+          f"{'Top1夺冠':<10} {'Top4夺冠':<10} {'Top8夺冠':<10}")
+    print(f"  {'-' * 70}")
+    for label, m in rows:
+        print(f"  {label:<22} {np.mean(m['spearman']):<10.4f} "
+              f"{np.mean(m['top32_rate']):<10.4f} "
+              f"{m['champion_top1']:<10.4f} {m['champion_top4']:<10.4f} "
+              f"{m['champion_top8']:<10.4f}")
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -326,11 +451,15 @@ def main():
     print("  浙超赛制评价 — 问题4: 赛制合理化建议")
     print("=" * 64)
 
-    # 分组方案
-    groups = scheme_d_ilp_balanced(w_c3=10, w_str=1)
-    if groups is None:
-        print("  [错误] 无法生成分组方案")
-        return
+    # 分组方案: 使用问题1中的ILP均衡方案D
+    groups = BALANCED_GROUPS
+    c1_ok = len(check_c1(groups)) == 0
+    c2_ok = len(check_c2(groups)) == 0
+    c3_ok = check_c3(groups)[0] == 0
+    print(f"\n  分组方案: Q1-ILP均衡方案D "
+          f"C1={'通过' if c1_ok else '失败'} "
+          f"C2={'通过' if c2_ok else '失败'} "
+          f"C3={'通过' if c3_ok else '失败'}")
 
     # 实力赋值: 市级=3, 县级市=2, 县=1
     team_strengths = [t.strength for t in TEAMS]
@@ -351,15 +480,28 @@ def main():
     print(f"\n  模拟中... (双循环小组赛, {n_sim} 次)")
     m_double = compute_double_rr_metrics(rng2, groups, team_strengths, n_sim)
 
-    print(f"\n{'=' * 64}")
-    print(f"  赛制对比")
-    print(f"{'=' * 64}")
-    print(f"  {'赛制':<28} {'Spearman(↑)':<16} {'晋级率(↑)':<14}")
-    print(f"  {'-' * 58}")
-    print(f"  {'单循环+淘汰 (当前)':<28} {np.mean(m_current['spearman']):<16.4f} "
-          f"{np.mean(m_current['top32_rate']):<14.4f}")
-    print(f"  {'双循环+淘汰 (替代)':<28} {np.mean(m_double['spearman']):<16.4f} "
-          f"{np.mean(m_double['top32_rate']):<14.4f}")
+    print_metrics(m_double, "双循环小组赛 + 单场淘汰", n_sim)
+    print_comparison_table(
+        "固定层级实力模型对比 (3/2/1)",
+        [("单循环+淘汰", m_current), ("双循环+淘汰", m_double)],
+    )
+
+    # --- 层内正态实力扰动: s_i ~ N(level, (1/3)^2) ---
+    print(f"\n  模拟中... (层内正态实力扰动 σ={LAYER_SIGMA:.3f}, {n_sim} 次)")
+    m_rand_current = compute_randomized_strength_metrics(
+        groups, n_sim, simulate_group_stage,
+        sigma=LAYER_SIGMA, strength_seed=2026, match_seed=4200,
+    )
+    m_rand_double = compute_randomized_strength_metrics(
+        groups, n_sim, simulate_double_round_robin_group,
+        sigma=LAYER_SIGMA, strength_seed=2026, match_seed=4200,
+    )
+    print_metrics(m_rand_current, "随机实力: 单循环小组赛 + 单场淘汰", n_sim)
+    print_metrics(m_rand_double, "随机实力: 双循环小组赛 + 单场淘汰", n_sim)
+    print_comparison_table(
+        "层内正态实力模型对比 (σ=1/3)",
+        [("单循环+淘汰", m_rand_current), ("双循环+淘汰", m_rand_double)],
+    )
 
     # --- 合理化建议 ---
     print(f"\n{'=' * 64}")
@@ -369,8 +511,10 @@ def main():
     print("  1. 当前赛制 (16组×4队单循环 + 32强5轮淘汰):")
     print(f"     - 公平性: Spearman 均值 {np.mean(m_current['spearman']):.3f},")
     print(f"       实力前32名晋级率 {np.mean(m_current['top32_rate']):.1%}")
-    print(f"     - 冠军集中度: Top-1 夺冠概率 {m_current['champion_top1']:.1%},")
-    print(f"       Top-4 夺冠概率 {m_current['champion_top4']:.1%}")
+    print(f"     - 在随机实力模型下: Top-1/Top-4/Top-8夺冠概率分别为 "
+          f"{m_rand_current['champion_top1']:.1%}, "
+          f"{m_rand_current['champion_top4']:.1%}, "
+          f"{m_rand_current['champion_top8']:.1%}")
     print()
     print("  2. 建议改进:")
     print("     a) 小组赛改为双循环: Spearman 从 "
@@ -378,6 +522,11 @@ def main():
           f"{np.mean(m_double['spearman']):.3f}, "
           f"晋级准确率从 {np.mean(m_current['top32_rate']):.1%} 提升至 "
           f"{np.mean(m_double['top32_rate']):.1%}")
+    print("        随机实力模型下, Spearman 从 "
+          f"{np.mean(m_rand_current['spearman']):.3f} 提升至 "
+          f"{np.mean(m_rand_double['spearman']):.3f}, "
+          f"晋级准确率从 {np.mean(m_rand_current['top32_rate']):.1%} 提升至 "
+          f"{np.mean(m_rand_double['top32_rate']):.1%}")
     print("     b) 淘汰赛可考虑两回合制 (主客场), 进一步降低偶然性")
     print("     c) 小组出线名额: 当前前2名晋级 (50%) 较合理;")
     print("        若改为仅第1名晋级, 虽更精准但小组赛悬念不足")

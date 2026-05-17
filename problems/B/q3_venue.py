@@ -217,6 +217,104 @@ def ilp_venue_selection(groups, teams):
 
 
 # ============================================================
+# 3.5 拉格朗日松弛下界
+# ============================================================
+
+def lagrangian_relaxation(groups, teams, upper_bound, max_iter=200, theta_init=2.0):
+    """
+    Lagrangian relaxation of capacity constraint z_{gk} <= 2*y_k.
+
+    At each iteration, solves the relaxed p-median (without capacity)
+    to get L(lambda), then updates lambda via subgradient descent.
+
+    Returns: (best_lower_bound, history)
+    """
+    from pulp import (
+        LpMinimize, LpProblem, LpVariable, lpSum,
+        LpBinary, LpStatus, value, PULP_CBC_CMD,
+    )
+
+    n_loc = len(teams)
+    loc_names = [t.name for t in teams]
+
+    # Precompute group-to-location cost matrix C[g][k]
+    C = np.zeros((NUM_GROUPS, n_loc))
+    for g in range(NUM_GROUPS):
+        for k in range(n_loc):
+            C[g][k] = sum(haversine(name, loc_names[k]) for name in groups[g])
+
+    lam = np.zeros(n_loc)
+    best_L = -np.inf
+    best_iter = 0
+    UB = upper_bound
+    history = []
+    no_improve = 0
+
+    for it in range(max_iter):
+        prob = LpProblem(f"LR_{it}", LpMinimize)
+
+        y = {k: LpVariable(f"y_{k}", cat=LpBinary) for k in range(n_loc)}
+        z = {(g, k): LpVariable(f"z_{g}_{k}", cat=LpBinary)
+             for g in range(NUM_GROUPS) for k in range(n_loc)}
+
+        # Constraints: only eq:q3_y, eq:q3_z1, eq:q3_z2 (no capacity)
+        prob += lpSum(y[k] for k in range(n_loc)) == 8
+        for g in range(NUM_GROUPS):
+            prob += lpSum(z[g, k] for k in range(n_loc)) == 1
+        for g in range(NUM_GROUPS):
+            for k in range(n_loc):
+                prob += z[g, k] <= y[k]
+
+        # Lagrangian objective
+        obj_terms = []
+        for g in range(NUM_GROUPS):
+            for k in range(n_loc):
+                obj_terms.append((C[g][k] + lam[k]) * z[g, k])
+        for k in range(n_loc):
+            obj_terms.append(-2.0 * lam[k] * y[k])
+        prob += lpSum(obj_terms)
+
+        prob.solve(PULP_CBC_CMD(msg=0))
+
+        if LpStatus[prob.status] != "Optimal":
+            break
+
+        L_val = value(prob.objective)
+        improved = L_val > best_L + 1e-6
+        if improved:
+            best_L = L_val
+            best_iter = it
+            no_improve = 0
+        else:
+            no_improve += 1
+
+        # Subgradient: gamma_k = sum_g z_{gk} - 2*y_k
+        gamma = np.zeros(n_loc)
+        for k in range(n_loc):
+            z_sum = sum(value(z[g, k]) for g in range(NUM_GROUPS))
+            y_val = value(y[k])
+            gamma[k] = z_sum - 2.0 * y_val
+
+        norm_sq = np.sum(gamma ** 2)
+        if norm_sq < 1e-10:
+            history.append((it, L_val, best_L))
+            break
+
+        # Polyak step size with decay
+        theta = theta_init * (0.995 ** it)
+        alpha = theta * max(UB - L_val, 1.0) / norm_sq
+
+        lam = lam - alpha * gamma
+        history.append((it, L_val, best_L))
+
+        # Early stop if no improvement for 30 iterations
+        if no_improve >= 30:
+            break
+
+    return best_L, best_iter, history
+
+
+# ============================================================
 # 4. 评价与输出
 # ============================================================
 
@@ -362,6 +460,25 @@ def main():
     if venues_ilp is not None:
         gap = (km_heuristic - km_ilp) / km_ilp * 100
         print(f"\n  启发式比 ILP 最优多 {gap:.1f}% 总距离, 说明联合优化效果显著.")
+
+    # --- 拉格朗日松弛下界 ---
+    if venues_ilp is not None:
+        print(f"\n  正在求解拉格朗日松弛下界...")
+        lb, lb_iter, lb_hist = lagrangian_relaxation(groups, TEAMS, km_ilp)
+
+        print(f"\n{'=' * 72}")
+        print(f"  三级最优性认证")
+        print(f"{'=' * 72}")
+        print(f"  拉格朗日下界 L*:    {lb:.0f} km  (第 {lb_iter} 轮收敛)")
+        print(f"  ILP 精确解:         {km_ilp:.0f} km")
+        print(f"  启发式上界:         {km_heuristic:.0f} km")
+        print(f"")
+        ilp_gap = (km_ilp - lb) / lb * 100 if lb > 0 else float('inf')
+        heur_gap = (km_heuristic - lb) / lb * 100 if lb > 0 else float('inf')
+        print(f"  L* <= OPT_ILP <= OPT_heur")
+        print(f"  ILP 最优性间隔:     {ilp_gap:.2f}%")
+        print(f"  启发式最优性间隔:   {heur_gap:.2f}%")
+        print(f"  启发式 vs ILP:      +{gap:.1f}%")
 
     print(f"\n  建议: 实际赛事应优先考虑地级市 (交通/住宿/影响力),")
     print(f"  并在浙北、浙中、浙南各布 2~3 个场地, 确保区域覆盖.")
