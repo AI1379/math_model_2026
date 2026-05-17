@@ -504,32 +504,32 @@ def run_experiment(n_seeds=100, include_marginal=True):
         all_p = [r["p_value"] for r in mres]
 
         print(f"\n{'=' * 72}")
-        print(f"  Marginal Uniformity Test - {slabel}")
-        print(f"  {ns} draws | H0: P(team in group) = 1/16 | df=15")
+        print(f"  边际均匀性检验 - {slabel}")
+        print(f"  {ns} 次抽签 | H0: P(球队进入某组) = 1/16 | df=15")
         print(f"{'=' * 72}")
         print(
-            f"  Pass chi-sq (a=0.05):          {n_pass}/{n_total} ({n_pass / n_total:.1%})"
+            f"  通过卡方检验 (α=0.05):          {n_pass}/{n_total} ({n_pass / n_total:.1%})"
         )
         print(
-            f"  Pass Bonferroni (a={alpha_bonf:.4f}): {n_pass_bonf}/{n_total} ({n_pass_bonf / n_total:.1%})"
+            f"  通过Bonferroni校正 (α={alpha_bonf:.4f}): {n_pass_bonf}/{n_total} ({n_pass_bonf / n_total:.1%})"
         )
-        print(f"  Mean p-value:                   {np.mean(all_p):.4f}")
-        print(f"  Median p-value:                 {np.median(all_p):.4f}")
+        print(f"  p值均值:                         {np.mean(all_p):.4f}")
+        print(f"  p值中位:                         {np.median(all_p):.4f}")
 
         failing = [r for r in mres if not r["pass"]]
         if failing:
-            print("\n  Failed at a=0.05:")
+            print("\n  未通过α=0.05检验的球队:")
             for r in sorted(failing, key=lambda x: x["p_value"]):
                 print(
-                    f"    {r['name']} ({r['city']}) - chi2={r['chi2']:.2f}, p={r['p_value']:.6f}"
+                    f"    {r['name']} ({r['city']}) - χ²={r['chi2']:.2f}, p={r['p_value']:.6f}"
                 )
 
         ks_stat, ks_p = kstest(all_p, "uniform")
-        print(f"\n  p-value KS test: D={ks_stat:.4f}, p={ks_p:.4f}")
+        print(f"\n  p值分布KS检验: D={ks_stat:.4f}, p={ks_p:.4f}")
         if ks_p >= 0.05:
-            print("    -> consistent with H0")
+            print("    -> 与H0一致")
         else:
-            print("    -> deviates from H0")
+            print("    -> 偏离H0")
 
     return results
 

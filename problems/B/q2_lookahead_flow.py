@@ -516,30 +516,30 @@ def print_evaluation(groups: List[List[str]], stats: DrawStats) -> None:
     c3n, c3d = check_c3(groups)
     print()
     print(
-        "  constraints: "
-        f"C1={'OK' if not c1v else 'FAIL'}  "
-        f"C2={'OK' if not c2v else 'FAIL'}  "
-        f"C3={'OK' if c3n == 0 else str(c3n) + ' conflict pairs'}"
+        "  约束检查: "
+        f"C1={'通过' if not c1v else '违反'}  "
+        f"C2={'通过' if not c2v else '违反'}  "
+        f"C3={'通过' if c3n == 0 else str(c3n) + ' 对冲突'}"
     )
     if c3d:
         for g, city, names in c3d:
-            print(f"    C3 detail: {group_label(g - 1)} {city} {names}")
+            print(f"    C3详情: {group_label(g - 1)} {city} {names}")
 
     print(
-        "  metrics: "
+        "  评价指标: "
         f"F1={metric_f1(groups)}  "
         f"F2={metric_f2(groups):.4f}  "
-        f"F2_range={metric_f2_range(groups)}  "
+        f"F2'={metric_f2_range(groups)}  "
         f"F3={metric_f3(groups):.4f}"
     )
     print(
-        "  look-ahead: "
-        f"flow_checks={stats.flow_checks}  "
-        f"min_cost_fallback_checks={stats.min_cost_checks}  "
-        f"unsafe_candidates={stats.unsafe_candidates}  "
-        f"critical_steps={stats.critical_steps}  "
-        f"forced_steps={stats.forced_steps}  "
-        f"max_best_final_F1={stats.max_best_final_f1}"
+        "  前瞻统计: "
+        f"流检查次数={stats.flow_checks}  "
+        f"最小费用流回退={stats.min_cost_checks}  "
+        f"危险候选组={stats.unsafe_candidates}  "
+        f"干预步数={stats.critical_steps}  "
+        f"唯一选择步数={stats.forced_steps}  "
+        f"最大最终F1={stats.max_best_final_f1}"
     )
 
 
@@ -548,9 +548,9 @@ def print_trace(stats: DrawStats, limit: int) -> None:
         return
 
     print()
-    print(f"  first {min(limit, len(stats.decisions))} county draw decisions:")
-    print("  step  team        city  legal  feas  safe  chosen  best_final_F1")
-    print("  ----  ----------  ----  -----  ----  ----  ------  -------------")
+    print(f"  前 {min(limit, len(stats.decisions))} 步县级队抽签详情:")
+    print("  步序  队伍        城市  可选  可行  安全  选定组  最优最终F1")
+    print("  ----  ----------  ----  ----  ----  ----  ------  -------------")
     for d in stats.decisions[:limit]:
         print(
             f"  {d.step:>4}  {d.team:<10}  {d.city:<4}  "
@@ -564,7 +564,7 @@ def run_sample(seed: int, trace_limit: int) -> None:
     groups, stats = draw_lookahead_flow(rng, trace=trace_limit > 0)
 
     print("=" * 72)
-    print(f"Q2 look-ahead min-cost-flow draw, sample seed={seed}")
+    print(f"前瞻最小费用流抽签示例, seed={seed}")
     print("=" * 72)
     print_groups(groups)
     print_evaluation(groups, stats)
@@ -608,11 +608,11 @@ def run_monte_carlo(n_sim: int, seed0: int) -> None:
 
     print()
     print("=" * 72)
-    print(f"Monte Carlo summary, n={n_sim}, seed0={seed0}, failures={failures}")
+    print(f"蒙特卡洛汇总, n={n_sim}, seed0={seed0}, 失败次数={failures}")
     print("=" * 72)
 
     if not f1_values:
-        print("No successful draws.")
+        print("无成功抽签样本。")
         return
 
     f1 = np.array(f1_values)
@@ -626,30 +626,30 @@ def run_monte_carlo(n_sim: int, seed0: int) -> None:
     fs = np.array(forced_steps)
 
     print(
-        f"  F1 C3 conflict pairs: mean={f1.mean():.4f}, "
-        f"P(F1=0)={(f1 == 0).mean():.4f}, max={int(f1.max())}"
+        f"  F1 C3冲突对数: 均值={f1.mean():.4f}, "
+        f"P(F1=0)={(f1 == 0).mean():.4f}, 最大={int(f1.max())}"
     )
     print(
-        f"  F2 strength std:      mean={f2.mean():.4f}, "
-        f"median={np.median(f2):.4f}, min={f2.min():.4f}, max={f2.max():.4f}"
+        f"  F2 实力标准差: 均值={f2.mean():.4f}, "
+        f"中位={np.median(f2):.4f}, 最小={f2.min():.4f}, 最大={f2.max():.4f}"
     )
     print(
-        f"  F2 range:             mean={f2r.mean():.2f}, "
-        f"min={int(f2r.min())}, max={int(f2r.max())}"
+        f"  F2' 实力极差:   均值={f2r.mean():.2f}, "
+        f"最小={int(f2r.min())}, 最大={int(f2r.max())}"
     )
     print(
-        f"  F3 diversity entropy: mean={f3.mean():.4f}, "
-        f"min={f3.min():.4f}, max={f3.max():.4f}"
+        f"  F3 多样性熵:    均值={f3.mean():.4f}, "
+        f"最小={f3.min():.4f}, 最大={f3.max():.4f}"
     )
     print(
-        f"  look-ahead workload:  avg_flow_checks={fc.mean():.1f}, "
-        f"avg_min_cost_fallbacks={mc.mean():.1f}, "
-        f"avg_forced_steps={fs.mean():.1f}"
+        f"  前瞻流工作量:   平均流检查={fc.mean():.1f}, "
+        f"平均最小费用流回退={mc.mean():.1f}, "
+        f"平均唯一选择步数={fs.mean():.1f}"
     )
     print(
-        f"  look-ahead pruning:   avg_unsafe_candidates={unsafe.mean():.1f}, "
-        f"unsafe_rate={(unsafe.sum() / fc.sum()):.4f}, "
-        f"avg_critical_steps={critical.mean():.1f}"
+        f"  前瞻流剪枝:     平均危险候选组={unsafe.mean():.1f}, "
+        f"危险率={(unsafe.sum() / fc.sum()):.4f}, "
+        f"平均干预步数={critical.mean():.1f}"
     )
 
 

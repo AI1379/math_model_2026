@@ -140,23 +140,19 @@ def simulate_knockout(rng, team_indices, team_strengths):
     返回: (冠军index, 最终排名列表 — 从第1名到第32名).
     """
     current_round = list(team_indices)  # 32 支队
-    rankings = []  # 被淘汰的队, 按名次 (后淘汰 = 名次高)
 
     # [问题] 淘汰赛的对阵如何确定?
     # [解决] 简化为: 每轮随机配对 (实际赛事会根据小组排名设置种子,
     #        但为了分析赛制本身的公平性, 随机配对更中性).
-    #        更合理的做法: 1A vs 2B 等, 但需要完整的 bracket 设计.
-    #        此处用"相邻配对": sorted by group rank → (0,1)(2,3)...
-
-    # 第1轮: 按小组排名配对 (1st vs 2nd from different groups)
-    # 简化: 打乱后相邻配对
+    #        更细的同组回避和种子蛇形对阵作为改进建议讨论.
     rng.shuffle(current_round)
 
     round_names = ["32强", "16强", "八强", "四强", "决赛"]
-    eliminated = []
+    eliminated_by_round = []
 
     for rnd, name in enumerate(round_names):
         next_round = []
+        round_losers = []
         for i in range(0, len(current_round), 2):
             ia, ib = current_round[i], current_round[i + 1]
             sa, sb = match_result(rng, team_strengths[ia], team_strengths[ib])
@@ -165,14 +161,61 @@ def simulate_knockout(rng, team_indices, team_strengths):
             else:
                 winner, loser = ib, ia
             next_round.append(winner)
-            eliminated.append(loser)
+            round_losers.append(loser)
         current_round = next_round
+        eliminated_by_round.append(round_losers)
+        if len(current_round) > 1:
+            rng.shuffle(current_round)
 
     # 冠军
     champion = current_round[0]
-    # 排名: 冠军 → 亚军 (决赛败者) → 四强败者 → ... → 32强败者
-    final_ranking = [champion] + eliminated[::-1]
+    # 排名: 冠军 → 决赛败者 → 半决赛败者 → ... → 32强败者.
+    # 同一轮被淘汰的球队只产生并列区间, 用当轮随机对阵顺序补位,
+    # 不再使用真实实力排序, 以免人为抬高 Spearman 指标.
+    final_ranking = [champion]
+    for losers in reversed(eliminated_by_round):
+        final_ranking.extend(losers)
     return champion, final_ranking
+
+
+def complete_group_loser_ranking(rng, group_rankings):
+    """
+    小组未出线球队的第33--64名补位.
+
+    真实赛制不会给所有小组第3/第4名产生精确总排名。本文按小组名次分层:
+    16个小组第3名排在16个小组第4名前；同层球队随机补位。该规则只使用
+    比赛阶段可观察信息, 不使用真实实力排序。
+    """
+    group_losers = []
+    for pos in (2, 3):
+        layer = [ranking[pos] for ranking in group_rankings]
+        rng.shuffle(layer)
+        group_losers.extend(layer)
+    return group_losers
+
+
+def advancement_reference(strength_rank, team_strengths, cutoff=32):
+    """
+    构造“应晋级”基准集合。
+
+    层内随机模型有唯一实力排序, 基准就是Top-32。固定3/2/1层级模型存在
+    大量并列, 不存在唯一第32名; 本文改用rank<=32所对应的高/中档球队集合,
+    并用该集合真实规模作分母, 避免把31队基准误除以32。
+    """
+    rank = np.asarray(strength_rank)
+    mask = rank <= cutoff
+    denominator = int(np.sum(mask))
+    if denominator == 0:
+        raise ValueError("advancement reference set is empty")
+
+    strengths = np.asarray(team_strengths, dtype=float)
+    if denominator == cutoff and len(np.unique(strengths)) == len(strengths):
+        label = "实力Top-32实际晋级比例"
+    elif denominator == 31 and len(np.unique(strengths)) == 3:
+        label = "高/中档球队实际晋级比例，31队基准"
+    else:
+        label = f"rank<=32基准球队实际晋级比例，{denominator}队基准"
+    return mask, denominator, label
 
 
 # ============================================================
@@ -192,12 +235,7 @@ def simulate_tournament(rng, groups, team_strengths):
 
     # 完整排名 (64 队): 淘汰赛排名 + 小组赛淘汰的 32 队
     knockout_ranking = final_ranking  # 32 队排名
-    group_losers = []
-    for ranking in group_rankings:
-        group_losers.extend(ranking[2:])  # 每组第 3、4 名
-
-    # 小组赛淘汰队按实力降序排名 (第 33~64 名)
-    group_losers.sort(key=lambda i: team_strengths[i], reverse=True)
+    group_losers = complete_group_loser_ranking(rng, group_rankings)
 
     full_ranking = knockout_ranking + group_losers
     return full_ranking
@@ -206,6 +244,9 @@ def simulate_tournament(rng, groups, team_strengths):
 def compute_metrics(rng, groups, team_strengths, n_sim):
     """蒙特卡洛仿真, 计算多项公平性指标"""
     strength_rank = stats.rankdata([-s for s in team_strengths])  # 实力排名 (1=最强)
+    advancement_mask, advancement_denominator, advancement_label = (
+        advancement_reference(strength_rank, team_strengths)
+    )
 
     spearmans = []
     top32_rates = []
@@ -224,10 +265,10 @@ def compute_metrics(rng, groups, team_strengths, n_sim):
         for ranking in group_rankings:
             qualified.extend(ranking[:2])
 
-        # 晋级准确率: 实力前32中实际晋级了多少
+        # 晋级准确率: 固定层级模型按高/中档球队集合计, 随机模型按Top-32计.
         top32_actual = sum(1 for i in range(len(team_strengths))
-                          if strength_rank[i] <= 32 and i in qualified)
-        top32_rates.append(top32_actual / 32)
+                          if advancement_mask[i] and i in qualified)
+        top32_rates.append(top32_actual / advancement_denominator)
 
         # 小组赛爆冷: 实力弱的队赢了实力强的队
         for group in [g for g in groups]:
@@ -254,10 +295,7 @@ def compute_metrics(rng, groups, team_strengths, n_sim):
 
         # 完整排名 → Spearman 相关系数
         full_ranking = final_ranking
-        group_losers = []
-        for ranking in group_rankings:
-            group_losers.extend(ranking[2:])
-        group_losers.sort(key=lambda i: team_strengths[i], reverse=True)
+        group_losers = complete_group_loser_ranking(rng, group_rankings)
         full_ranking = full_ranking + group_losers
 
         # 计算: 排名位置 vs 实力排名
@@ -274,6 +312,10 @@ def compute_metrics(rng, groups, team_strengths, n_sim):
         "champion_top8": champion_top8 / n_sim,
         "upset_rate_group": upsets_group / max(total_group_matches, 1),
         "upset_rate_knockout": upsets_knockout / max(total_knockout_matches, 1),
+        "advancement_label": advancement_label,
+        "advancement_denominator": advancement_denominator,
+        "advancement_short_label": "高/中档晋级率",
+        "champion_mode": "fixed_tier",
     }
 
 
@@ -314,6 +356,9 @@ def simulate_double_round_robin_group(rng, groups, team_strengths):
 def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
     """双循环小组赛 + 单场淘汰"""
     strength_rank = stats.rankdata([-s for s in team_strengths])
+    advancement_mask, advancement_denominator, advancement_label = (
+        advancement_reference(strength_rank, team_strengths)
+    )
     spearmans = []
     top32_rates = []
     champion_top1 = 0
@@ -327,8 +372,8 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
             qualified.extend(ranking[:2])
 
         top32_actual = sum(1 for i in range(len(team_strengths))
-                          if strength_rank[i] <= 32 and i in qualified)
-        top32_rates.append(top32_actual / 32)
+                          if advancement_mask[i] and i in qualified)
+        top32_rates.append(top32_actual / advancement_denominator)
 
         champion, final_ranking = simulate_knockout(rng, qualified, team_strengths)
         if strength_rank[champion] <= 1:
@@ -338,10 +383,7 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
         if strength_rank[champion] <= 8:
             champion_top8 += 1
 
-        group_losers = []
-        for ranking in group_rankings:
-            group_losers.extend(ranking[2:])
-        group_losers.sort(key=lambda i: team_strengths[i], reverse=True)
+        group_losers = complete_group_loser_ranking(rng, group_rankings)
         full_ranking = final_ranking + group_losers
         pos = list(range(1, 65))
         actual_strength_ranks = [strength_rank[i] for i in full_ranking]
@@ -354,6 +396,10 @@ def compute_double_rr_metrics(rng, groups, team_strengths, n_sim):
         "champion_top1": champion_top1 / n_sim,
         "champion_top4": champion_top4 / n_sim,
         "champion_top8": champion_top8 / n_sim,
+        "advancement_label": advancement_label,
+        "advancement_denominator": advancement_denominator,
+        "advancement_short_label": "高/中档晋级率",
+        "champion_mode": "fixed_tier",
     }
 
 
@@ -378,6 +424,9 @@ def compute_randomized_strength_metrics(
     for _ in range(n_sim):
         team_strengths = draw_layered_strengths(rng_strength, sigma=sigma)
         strength_rank = stats.rankdata([-s for s in team_strengths], method="ordinal")
+        advancement_mask, advancement_denominator, advancement_label = (
+            advancement_reference(strength_rank, team_strengths)
+        )
 
         group_rankings = group_stage_func(rng_match, groups, team_strengths)
         qualified = []
@@ -385,8 +434,8 @@ def compute_randomized_strength_metrics(
             qualified.extend(ranking[:2])
 
         top32_actual = sum(1 for i in range(len(team_strengths))
-                          if strength_rank[i] <= 32 and i in qualified)
-        top32_rates.append(top32_actual / 32)
+                          if advancement_mask[i] and i in qualified)
+        top32_rates.append(top32_actual / advancement_denominator)
 
         champion, final_ranking = simulate_knockout(rng_match, qualified, team_strengths)
         if strength_rank[champion] <= 1:
@@ -396,10 +445,7 @@ def compute_randomized_strength_metrics(
         if strength_rank[champion] <= 8:
             champion_top8 += 1
 
-        group_losers = []
-        for ranking in group_rankings:
-            group_losers.extend(ranking[2:])
-        group_losers.sort(key=lambda i: team_strengths[i], reverse=True)
+        group_losers = complete_group_loser_ranking(rng_match, group_rankings)
         full_ranking = final_ranking + group_losers
 
         pos = list(range(1, 65))
@@ -414,6 +460,10 @@ def compute_randomized_strength_metrics(
         "champion_top4": champion_top4 / n_sim,
         "champion_top8": champion_top8 / n_sim,
         "sigma": sigma,
+        "advancement_label": "实力Top-32实际晋级比例",
+        "advancement_denominator": 32,
+        "advancement_short_label": "Top32晋级率",
+        "champion_mode": "ranked",
     }
 
 
@@ -429,27 +479,39 @@ def print_metrics(m, label, n_sim):
     print(f"    均值={np.mean(m['spearman']):.4f}  中位={np.median(m['spearman']):.4f}")
     print(f"    5%/95% 分位: {np.percentile(m['spearman'], 5):.4f} / "
           f"{np.percentile(m['spearman'], 95):.4f}")
-    print(f"  晋级准确率 (实力前32中实际晋级比例, ↑):")
+    print(f"  晋级准确率 ({m.get('advancement_label', '实力Top-32实际晋级比例')}, ↑):")
     print(f"    均值={np.mean(m['top32_rate']):.4f}  "
           f"5%分位={np.percentile(m['top32_rate'], 5):.4f}")
     print(f"  冠军实力分布:")
-    print(f"    P(实力第1名夺冠)={m['champion_top1']:.4f}")
-    print(f"    P(实力前4名夺冠)={m['champion_top4']:.4f}")
-    print(f"    P(实力前8名夺冠)={m['champion_top8']:.4f}")
+    if m.get("champion_mode") == "fixed_tier":
+        print("    固定层级存在并列, 仅解释最高实力档夺冠率")
+        print(f"    P(最高实力档夺冠)={m['champion_top8']:.4f}")
+    else:
+        print(f"    P(实力第1名夺冠)={m['champion_top1']:.4f}")
+        print(f"    P(实力前4名夺冠)={m['champion_top4']:.4f}")
+        print(f"    P(实力前8名夺冠)={m['champion_top8']:.4f}")
 
 
 def print_comparison_table(title, rows):
     print(f"\n{'=' * 72}")
     print(f"  {title}")
     print(f"{'=' * 72}")
-    print(f"  {'赛制':<22} {'Spearman':<10} {'晋级率':<10} "
-          f"{'Top1夺冠':<10} {'Top4夺冠':<10} {'Top8夺冠':<10}")
-    print(f"  {'-' * 70}")
-    for label, m in rows:
-        print(f"  {label:<22} {np.mean(m['spearman']):<10.4f} "
-              f"{np.mean(m['top32_rate']):<10.4f} "
-              f"{m['champion_top1']:<10.4f} {m['champion_top4']:<10.4f} "
-              f"{m['champion_top8']:<10.4f}")
+    fixed_tier = all(m.get("champion_mode") == "fixed_tier" for _, m in rows)
+    if fixed_tier:
+        print(f"  {'赛制':<22} {'Spearman':<10} {'高/中档晋级率':<14} {'最高档夺冠':<10}")
+        print(f"  {'-' * 60}")
+        for label, m in rows:
+            print(f"  {label:<22} {np.mean(m['spearman']):<10.4f} "
+                  f"{np.mean(m['top32_rate']):<14.4f} {m['champion_top8']:<10.4f}")
+    else:
+        print(f"  {'赛制':<22} {'Spearman':<10} {'Top32晋级率':<12} "
+              f"{'Top1夺冠':<10} {'Top4夺冠':<10} {'Top8夺冠':<10}")
+        print(f"  {'-' * 72}")
+        for label, m in rows:
+            print(f"  {label:<22} {np.mean(m['spearman']):<10.4f} "
+                  f"{np.mean(m['top32_rate']):<12.4f} "
+                  f"{m['champion_top1']:<10.4f} {m['champion_top4']:<10.4f} "
+                  f"{m['champion_top8']:<10.4f}")
 
 
 # ============================================================
@@ -520,35 +582,22 @@ def main():
     print()
     print("  1. 当前赛制 (16组×4队单循环 + 32强5轮淘汰):")
     print(f"     - 公平性: Spearman 均值 {np.mean(m_current['spearman']):.3f},")
-    print(f"       实力前32名晋级率 {np.mean(m_current['top32_rate']):.1%}")
+    print(f"       高/中档球队晋级率 {np.mean(m_current['top32_rate']):.1%}")
     print(f"     - 在随机实力模型下: Top-1/Top-4/Top-8夺冠概率分别为 "
           f"{m_rand_current['champion_top1']:.1%}, "
           f"{m_rand_current['champion_top4']:.1%}, "
           f"{m_rand_current['champion_top8']:.1%}")
     print()
     print("  2. 建议改进:")
-    print("     a) 小组赛改为双循环: Spearman 从 "
+    print("     小组赛改为双循环: Spearman 从 "
           f"{np.mean(m_current['spearman']):.3f} 提升至 "
           f"{np.mean(m_double['spearman']):.3f}, "
-          f"晋级准确率从 {np.mean(m_current['top32_rate']):.1%} 提升至 "
+          f"高/中档晋级率从 {np.mean(m_current['top32_rate']):.1%} 提升至 "
           f"{np.mean(m_double['top32_rate']):.1%}")
     print("        随机实力模型下, Spearman 从 "
           f"{np.mean(m_rand_current['spearman']):.3f} 提升至 "
           f"{np.mean(m_rand_double['spearman']):.3f}, "
           f"晋级准确率从 {np.mean(m_rand_current['top32_rate']):.1%} 提升至 "
           f"{np.mean(m_rand_double['top32_rate']):.1%}")
-    print("     b) 淘汰赛可考虑两回合制 (主客场), 进一步降低偶然性")
-    print("     c) 小组出线名额: 当前前2名晋级 (50%) 较合理;")
-    print("        若改为仅第1名晋级, 虽更精准但小组赛悬念不足")
-    print("     d) 建议在淘汰赛阶段引入种子排名:")
-    print("        小组第1名 vs 其他组第2名, 避免过早强强对话")
-    print()
-    print("  3. 定量依据:")
-    print("     - 单循环仅 6 场/组, 样本小, 晋级偶然性高")
-    print("     - 双循环 12 场/组, 样本翻倍, 更能反映真实实力")
-    print("     - 淘汰赛 31 场均为单场定胜负, 偶然性不可避免")
-    print("       (这是赛制设计的选择: 公平性 vs 观赏性 vs 赛程长度)")
-
-
 if __name__ == "__main__":
     main()

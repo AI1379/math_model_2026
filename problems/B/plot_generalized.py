@@ -106,7 +106,7 @@ def plot_all(results, n_seeds):
     fig.savefig(os.path.join(FIGDIR, "generalized_flow_checks.png"), dpi=150)
     plt.close(fig)
 
-    print(f"Figures saved to {FIGDIR}")
+    print(f"图表已保存至 {FIGDIR}")
 
 
 def main():
